@@ -105,25 +105,41 @@ const getStoredToken = () => {
 };
 
 // Request a fresh GIS implicit-flow token (pops consent if needed)
-const requestGoogleToken = () => new Promise((resolve, reject) => {
+// requestGoogleToken(interactive)
+// interactive=true  → show Google account picker (used on button tap)
+// interactive=false → silent refresh only, rejects if interaction needed
+const requestGoogleToken = (interactive = true) => new Promise((resolve, reject) => {
   if (!GOOG_CLIENT_ID) { reject(new Error('no_client_id')); return; }
   if (!window.google?.accounts?.oauth2) { reject(new Error('gis_not_loaded')); return; }
+
+  // Always set a fresh callback — the closure must match THIS promise
+  const handleResponse = (resp) => {
+    if (resp.error) {
+      reject(new Error(resp.error));
+      return;
+    }
+    const tok = {
+      access_token: resp.access_token,
+      expires_at: Date.now() + (resp.expires_in || 3600) * 1000
+    };
+    lsSet(GDRIVE_AUTH_KEY, tok);
+    resolve(resp.access_token);
+  };
+
   if (!_tokenClient) {
     _tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOG_CLIENT_ID,
       scope: GOOG_SCOPE,
-      callback: (resp) => {
-        if (resp.error) { reject(new Error(resp.error)); return; }
-        const tok = {
-          access_token: resp.access_token,
-          expires_at: Date.now() + (resp.expires_in || 3600) * 1000
-        };
-        lsSet(GDRIVE_AUTH_KEY, tok);
-        resolve(resp.access_token);
-      }
+      callback: handleResponse,
     });
+  } else {
+    // Update callback on existing client for this call's promise
+    _tokenClient.callback = handleResponse;
   }
-  _tokenClient.requestAccessToken({ prompt: 'none' });
+
+  // 'consent' shows the account picker and always works interactively.
+  // '' (empty string) attempts silent refresh — fine for background token renewal.
+  _tokenClient.requestAccessToken({ prompt: interactive ? 'consent' : '' });
 });
 
 // Generic: find or create a named JSON file in the app's Drive space
@@ -1272,7 +1288,7 @@ function App() {
   const syncPrefsToDrive = useCallback(async (newPrefs) => {
     const tok = getStoredToken();
     if (!tok) return;
-    try { await driveWrite(tok.access_token, GOOG_PREFS_FILE, newPrefs); } catch {}
+    try { await driveWrite(tok.access_token, GOOG_PREFS_FILE, newPrefs); } catch { /* silent — stale token, will refresh on next interactive sign-in */ }
   }, []);
   const [expandedDays, setExpandedDays] = useState(() => new Set([todayStr()]));
 
