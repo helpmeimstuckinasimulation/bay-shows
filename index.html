@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -50,7 +49,6 @@
   <div id="root"></div>
 
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
   <script>
@@ -90,8 +88,18 @@ const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
 const GOOG_PREFS_FILE = 'bay_shows_prefs.json';
 const GOOG_TAGS_FILE  = 'bay_shows_tags.json';
 
-// In-memory file ID cache so we don't re-query Drive on every write
-const _driveFileIds = {};
+// File ID cache — persisted to localStorage so we always write to the same
+// Drive file across token refreshes and new sign-in sessions.
+// Key: 'bay-gdrive-fileid-v1', Value: { [filename]: fileId }
+const GDRIVE_FILEID_KEY = 'bay-gdrive-fileid-v1';
+
+const _driveFileIds = (() => {
+  try { return JSON.parse(localStorage.getItem(GDRIVE_FILEID_KEY) || '{}'); } catch { return {}; }
+})();
+
+function _saveFileIdCache() {
+  try { localStorage.setItem(GDRIVE_FILEID_KEY, JSON.stringify(_driveFileIds)); } catch {}
+}
 
 // Returns stored token { access_token, expires_at } or null
 const getStoredToken = () => {
@@ -152,6 +160,7 @@ async function driveFileId(token, filename) {
   const data = await r.json();
   if (data.files && data.files.length > 0) {
     _driveFileIds[filename] = data.files[0].id;
+    _saveFileIdCache();
     return data.files[0].id;
   }
   // Create empty file
@@ -162,6 +171,7 @@ async function driveFileId(token, filename) {
   });
   const file = await cr.json();
   _driveFileIds[filename] = file.id;
+  _saveFileIdCache();
   return file.id;
 }
 
@@ -1768,6 +1778,5 @@ function App() {
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(/*#__PURE__*/React.createElement(App, null));
   </script>
-
 </body>
 </html>
