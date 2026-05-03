@@ -49,10 +49,6 @@
 <body>
   <div id="root"></div>
 
-  <!-- Google Identity Services (for optional Drive prefs sync) -->
-
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -84,17 +80,17 @@ const PREFS_KEY = 'bay-prefs-v14';
 const TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 // ── Google Drive OAuth (cloud sync for prefs + tags) ─────────────
-// Scope: drive.file — app can only see files IT created (safe, minimal)
-const GOOG_CLIENT_ID = '1030489561991-kbu11qmn3o58ahu69d27f3g09qhai1ns.apps.googleusercontent.com'; // TODO: paste OAuth 2.0 Client ID from Google Cloud Console
-const GOOG_SCOPE = 'https://www.googleapis.com/auth/drive.file';
-const GDRIVE_AUTH_KEY   = 'bay-gdrive-token-v1';
-const GOOG_PREFS_FILE   = 'bay_shows_prefs.json';
-const GOOG_TAGS_FILE    = 'bay_shows_tags.json';
+// ── Google Drive OAuth — redirect flow ───────────────────────────
+// Uses OAuth 2.0 implicit grant (token in URL hash on return).
+// No popup, no GIS library — works reliably on iOS PWAs.
+const GOOG_CLIENT_ID  = '1030489561991-kbu11qmn3o58ahu69d27f3g09qhai1ns.apps.googleusercontent.com';
+const GOOG_SCOPE      = 'https://www.googleapis.com/auth/drive.file';
+const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
+const GOOG_PREFS_FILE = 'bay_shows_prefs.json';
+const GOOG_TAGS_FILE  = 'bay_shows_tags.json';
 
 // In-memory file ID cache so we don't re-query Drive on every write
 const _driveFileIds = {};
-
-let _tokenClient = null;
 
 // Returns stored token { access_token, expires_at } or null
 const getStoredToken = () => {
@@ -104,43 +100,38 @@ const getStoredToken = () => {
   return t;
 };
 
-// Request a fresh GIS implicit-flow token (pops consent if needed)
-// requestGoogleToken(interactive)
-// interactive=true  → show Google account picker (used on button tap)
-// interactive=false → silent refresh only, rejects if interaction needed
-const requestGoogleToken = (interactive = true) => new Promise((resolve, reject) => {
-  if (!GOOG_CLIENT_ID) { reject(new Error('no_client_id')); return; }
-  if (!window.google?.accounts?.oauth2) { reject(new Error('gis_not_loaded')); return; }
+// Redirect to Google OAuth consent screen.
+// Google will redirect back to this page with #access_token=...&expires_in=...
+// On return, parseOAuthHash() (called at app init) picks up the token.
+const initiateGoogleAuth = () => {
+  if (!GOOG_CLIENT_ID) { alert('Drive sync not configured (no client ID)'); return; }
+  // Build the redirect URI: current origin + path, no hash
+  const redirectUri = window.location.origin + window.location.pathname;
+  const params = new URLSearchParams({
+    client_id:     GOOG_CLIENT_ID,
+    redirect_uri:  redirectUri,
+    response_type: 'token',
+    scope:         GOOG_SCOPE,
+    include_granted_scopes: 'true',
+  });
+  window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+};
 
-  // Always set a fresh callback — the closure must match THIS promise
-  const handleResponse = (resp) => {
-    if (resp.error) {
-      reject(new Error(resp.error));
-      return;
-    }
-    const tok = {
-      access_token: resp.access_token,
-      expires_at: Date.now() + (resp.expires_in || 3600) * 1000
-    };
-    lsSet(GDRIVE_AUTH_KEY, tok);
-    resolve(resp.access_token);
-  };
-
-  if (!_tokenClient) {
-    _tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: GOOG_CLIENT_ID,
-      scope: GOOG_SCOPE,
-      callback: handleResponse,
-    });
-  } else {
-    // Update callback on existing client for this call's promise
-    _tokenClient.callback = handleResponse;
-  }
-
-  // 'consent' shows the account picker and always works interactively.
-  // '' (empty string) attempts silent refresh — fine for background token renewal.
-  _tokenClient.requestAccessToken({ prompt: interactive ? 'consent' : '' });
-});
+// Parse the OAuth token from the URL hash on return from Google.
+// Returns { access_token, expires_at } or null.
+const parseOAuthHash = () => {
+  const hash = window.location.hash.slice(1); // strip leading #
+  if (!hash || !hash.includes('access_token')) return null;
+  const params = new URLSearchParams(hash);
+  const access_token = params.get('access_token');
+  const expires_in   = parseInt(params.get('expires_in') || '3600', 10);
+  if (!access_token) return null;
+  const tok = { access_token, expires_at: Date.now() + expires_in * 1000 };
+  lsSet(GDRIVE_AUTH_KEY, tok);
+  // Clean the token out of the URL so it doesn't persist in browser history
+  window.history.replaceState(null, '', window.location.pathname);
+  return tok;
+};
 
 // Generic: find or create a named JSON file in the app's Drive space
 async function driveFileId(token, filename) {
@@ -1226,16 +1217,11 @@ function App() {
     }, 600);
   }
 
-  // ── Google Drive sign-in + initial sync (prefs + tags) ──────
-  const signInWithGoogle = useCallback(async () => {
-    if (!GOOG_CLIENT_ID) {
-      setDriveSyncMsg('Drive sync not configured (no client ID)');
-      return;
-    }
+  // ── Drive sync logic (shared between OAuth return and manual re-sync) ─
+  const runDriveSync = useCallback(async (token) => {
+    setDriveSyncing(true);
+    setDriveSyncMsg('');
     try {
-      setDriveSyncing(true);
-      setDriveSyncMsg('');
-      const token = await requestGoogleToken();
       // Resolve user identity
       const ui = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: `Bearer ${token}` }
@@ -1252,12 +1238,10 @@ function App() {
       }
 
       // ── Sync tags ──
-      // Strategy: merge local + Drive, union wins, newer timestamp wins on conflict
       const localTags = lsGet(TAGS_KEY, {});
       const driveTags = await driveRead(token, GOOG_TAGS_FILE);
       if (driveTags) {
         const merged = mergeTags(localTags, driveTags);
-        // Write merged back to both local and Drive
         setTags(merged);
         lsSet(TAGS_KEY, merged);
         await driveWrite(token, GOOG_TAGS_FILE, merged);
@@ -1268,27 +1252,58 @@ function App() {
             : 'Synced with Drive'
         );
       } else {
-        // First sign-in: push local tags to Drive
         await driveWrite(token, GOOG_TAGS_FILE, localTags);
         setDriveSyncMsg(
           `Signed in · ${Object.keys(localTags).length} saved show${Object.keys(localTags).length !== 1 ? 's' : ''} backed up`
         );
       }
     } catch (e) {
-      if (e.message === 'no_client_id') setDriveSyncMsg('Drive sync not configured');
-      else if (e.message === 'gis_not_loaded') setDriveSyncMsg('Google auth unavailable');
-      else setDriveSyncMsg('Sign-in failed: ' + e.message);
+      setDriveSyncMsg('Sync error: ' + e.message);
     } finally {
       setDriveSyncing(false);
-      // Auto-clear the message after 5s
-      setTimeout(() => setDriveSyncMsg(''), 5000);
+      setTimeout(() => setDriveSyncMsg(''), 6000);
     }
   }, [prefs]);
+
+  // ── On mount: check for OAuth redirect return (token in URL hash) ──
+  useEffect(() => {
+    const tok = parseOAuthHash(); // cleans URL if token found
+    if (tok) {
+      runDriveSync(tok.access_token);
+      return;
+    }
+    // Also restore session if a valid stored token exists
+    const stored = getStoredToken();
+    if (stored) {
+      // Restore driveUser from stored token via userinfo (quiet, no sync message)
+      fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${stored.access_token}` }
+      }).then(r => r.json()).then(u => {
+        if (u.email) setDriveUser({ email: u.email });
+      }).catch(() => {});
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Sign-in button handler: redirect to Google ────────────────
+  const signInWithGoogle = useCallback(() => {
+    if (!GOOG_CLIENT_ID) {
+      setDriveSyncMsg('Drive sync not configured (no client ID)');
+      return;
+    }
+    initiateGoogleAuth(); // full-page redirect — no return from here
+  }, []);
+
+  // ── Re-sync button (when already signed in) ───────────────────
+  const reSyncDrive = useCallback(() => {
+    const tok = getStoredToken();
+    if (tok) { runDriveSync(tok.access_token); return; }
+    initiateGoogleAuth(); // token expired — re-auth
+  }, [runDriveSync]);
 
   const syncPrefsToDrive = useCallback(async (newPrefs) => {
     const tok = getStoredToken();
     if (!tok) return;
-    try { await driveWrite(tok.access_token, GOOG_PREFS_FILE, newPrefs); } catch { /* silent — stale token, will refresh on next interactive sign-in */ }
+    try { await driveWrite(tok.access_token, GOOG_PREFS_FILE, newPrefs); } catch {}
   }, []);
   const [expandedDays, setExpandedDays] = useState(() => new Set([todayStr()]));
 
@@ -1498,7 +1513,7 @@ function App() {
     ? /*#__PURE__*/React.createElement("button", {
         title: `Syncing to Drive as ${driveUser.email} — tap to refresh sync`,
         style: { ...S.actionBtn, color: 'var(--accent)', fontSize: '11px' },
-        onClick: signInWithGoogle
+        onClick: reSyncDrive
       }, driveSyncing ? '…' : '☁')
     : GOOG_CLIENT_ID && /*#__PURE__*/React.createElement("button", {
         title: 'Sign in with Google to sync saved shows + prefs',
