@@ -67,7 +67,7 @@ const CACHE_KEY    = 'bay-events-cache-v1';
 const TAGS_KEY     = 'bay-events-tags-v9';
 const SNAP_KEY     = 'bay-events-snap-v9';
 const MANUAL_KEY   = 'bay-events-manual-v9';
-const PREFS_KEY    = 'bay-prefs-v17';
+const PREFS_KEY    = 'bay-prefs-v18';
 const HIDDEN_KEY   = 'bay-hidden-v1';   // { [eventId]: epochMs }
 const TICKETS_KEY  = 'bay-tickets-v1';  // { [eventId]: epochMs }
 const DJ_OVERRIDE_KEY = 'bay-dj-override-v1'; // { [eventId]: 'live'|'dj' }
@@ -843,7 +843,7 @@ function App() {
     showSaved: false,
     subgenres: [],
     showDJ: false,      // 19hz events hidden by default
-    liveOnly: false,
+    liveOnly: true,
     showHidden: false,
     showTickets: false,
     showStarredNoTicket: false,
