@@ -6,6 +6,7 @@ const DATA_CACHE = ‘bay-shows-data-v1’;
 const STATIC_ASSETS = [
 ‘/’,
 ‘/index.html’,
+‘/auth.html’,
 ‘/manifest.json’,
 ‘/icon-192.svg’,
 ‘/icon-512.svg’,
