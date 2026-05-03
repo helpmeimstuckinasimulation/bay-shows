@@ -1,6 +1,6 @@
 // Bay Shows PWA - Service Worker
 // Cache version — bump this to force full cache refresh
-const CACHE_VERSION = 'bay-shows-v1';
+const CACHE_VERSION = 'bay-shows-v2';
 const DATA_CACHE = 'bay-shows-data-v1';
 
 const STATIC_ASSETS = [
