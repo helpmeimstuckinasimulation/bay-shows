@@ -13,10 +13,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,300;1,400&display=swap" rel="stylesheet">
-  <!-- Apple touch icon inline SVG as data URI -->
   <link rel="apple-touch-icon" href="/bay-shows/icon-192.svg">
   <style>
-    /* ── Reset & base ─────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
       --bg:       #0a0a0f;
@@ -30,6 +28,8 @@
       --accent:   #e8ff47;
       --accent2:  #b8cc30;
       --red:      #ff4d4d;
+      --green:    #47ff8e;
+      --blue:     #47b8ff;
       --mono:     'JetBrains Mono', monospace;
       --radius:   4px;
       --safe-top:    env(safe-area-inset-top, 0px);
@@ -53,94 +53,63 @@
 
   <script>
 // ─────────────────────────────────────────────────────────────────
-// BAY SHOWS PWA  —  index.html embedded app
-// Data source: Google Drive export (6-hour TTL cache)
-// Storage: localStorage (same key names as v15 artifact)
+// BAY SHOWS PWA  v16 — index.html embedded app
 // ─────────────────────────────────────────────────────────────────
 
 const {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-  useMemo
+  useState, useEffect, useRef, useCallback, useMemo
 } = React;
 
 // ── Constants ────────────────────────────────────────────────────
-// Primary data source: bay_shows_merged (wraps { _meta, events[] })
 const DRIVE_DOC_ID = '1g0f-0fvw3W8-B0o8Ntg8RFF8ANfSebFKWx_pAJ_5kJs';
-const DRIVE_URL = `https://docs.google.com/document/d/${DRIVE_DOC_ID}/export?format=txt`;
-const CACHE_KEY = 'bay-events-cache-v1';
-const TAGS_KEY = 'bay-events-tags-v9';
-const SNAP_KEY = 'bay-events-snap-v9';
-const MANUAL_KEY = 'bay-events-manual-v9';
-const PREFS_KEY = 'bay-prefs-v14';
-const TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const DRIVE_URL    = `https://docs.google.com/document/d/${DRIVE_DOC_ID}/export?format=txt`;
+const CACHE_KEY    = 'bay-events-cache-v1';
+const TAGS_KEY     = 'bay-events-tags-v9';
+const SNAP_KEY     = 'bay-events-snap-v9';
+const MANUAL_KEY   = 'bay-events-manual-v9';
+const PREFS_KEY    = 'bay-prefs-v16';
+const HIDDEN_KEY   = 'bay-hidden-v1';   // { [eventId]: epochMs }
+const TICKETS_KEY  = 'bay-tickets-v1';  // { [eventId]: epochMs }
+const DJ_OVERRIDE_KEY = 'bay-dj-override-v1'; // { [eventId]: 'live'|'dj' }
+const TTL_MS       = 6 * 60 * 60 * 1000;
 
-// ── Google Drive OAuth (cloud sync for prefs + tags) ─────────────
-// ── Google Drive OAuth — Safari tab flow ─────────────────────────
-// Opens auth.html in a new Safari tab (real browser context, not PWA).
-// auth.html runs GIS requestAccessToken, writes token to localStorage,
-// then closes. This app polls for the tab to close and reads the token.
 const GOOG_CLIENT_ID  = '1030489561991-kbu11qmn3o58ahu69d27f3g09qhai1ns.apps.googleusercontent.com';
 const GOOG_SCOPE      = 'https://www.googleapis.com/auth/drive.file';
 const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
 const GOOG_PREFS_FILE = 'bay_shows_prefs.json';
 const GOOG_TAGS_FILE  = 'bay_shows_tags.json';
-
-// File ID cache — persisted to localStorage so we always write to the same
-// Drive file across token refreshes and new sign-in sessions.
-// Key: 'bay-gdrive-fileid-v1', Value: { [filename]: fileId }
 const GDRIVE_FILEID_KEY = 'bay-gdrive-fileid-v1';
 
 const _driveFileIds = (() => {
   try { return JSON.parse(localStorage.getItem(GDRIVE_FILEID_KEY) || '{}'); } catch { return {}; }
 })();
-
 function _saveFileIdCache() {
   try { localStorage.setItem(GDRIVE_FILEID_KEY, JSON.stringify(_driveFileIds)); } catch {}
 }
 
-// Returns stored token { access_token, expires_at } or null
 const getStoredToken = () => {
   const t = lsGet(GDRIVE_AUTH_KEY, null);
   if (!t || !t.access_token) return null;
-  if (t.expires_at && Date.now() > t.expires_at - 60000) return null; // 60s buffer
+  if (t.expires_at && Date.now() > t.expires_at - 60000) return null;
   return t;
 };
 
-// Open auth.html in a new tab and poll until it closes or a token appears.
-// Resolves with access_token string, rejects on timeout or error.
 const openAuthTab = () => new Promise((resolve, reject) => {
-  // auth.html lives alongside index.html
   const authUrl = window.location.origin + window.location.pathname.replace(/[^/]*$/, '') + 'auth.html';
   const tab = window.open(authUrl, '_blank');
-  if (!tab) {
-    reject(new Error('popup_blocked'));
-    return;
-  }
-
+  if (!tab) { reject(new Error('popup_blocked')); return; }
   const startTime = Date.now();
-  const TIMEOUT_MS = 5 * 60 * 1000; // 5 min
-
+  const TIMEOUT_MS = 5 * 60 * 1000;
   const poll = setInterval(() => {
-    // Check if token appeared in localStorage (written by auth.html)
     const stored = getStoredToken();
-    if (stored) {
-      clearInterval(poll);
-      resolve(stored.access_token);
-      return;
-    }
-    // Check if tab closed without writing a token
+    if (stored) { clearInterval(poll); resolve(stored.access_token); return; }
     if (tab.closed) {
       clearInterval(poll);
-      // One final check — auth.html may have written just before closing
       const finalCheck = getStoredToken();
       if (finalCheck) { resolve(finalCheck.access_token); return; }
       reject(new Error('Tab closed without completing sign-in'));
       return;
     }
-    // Timeout
     if (Date.now() - startTime > TIMEOUT_MS) {
       clearInterval(poll);
       try { tab.close(); } catch(e) {}
@@ -149,7 +118,6 @@ const openAuthTab = () => new Promise((resolve, reject) => {
   }, 500);
 });
 
-// Generic: find or create a named JSON file in the app's Drive space
 async function driveFileId(token, filename) {
   if (_driveFileIds[filename]) return _driveFileIds[filename];
   const q = encodeURIComponent(`name='${filename}' and trashed=false`);
@@ -163,7 +131,6 @@ async function driveFileId(token, filename) {
     _saveFileIdCache();
     return data.files[0].id;
   }
-  // Create empty file
   const cr = await fetch('https://www.googleapis.com/drive/v3/files', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -175,7 +142,6 @@ async function driveFileId(token, filename) {
   return file.id;
 }
 
-// Generic: read JSON file from Drive; returns parsed object or null
 async function driveRead(token, filename) {
   const fileId = await driveFileId(token, filename);
   const r = await fetch(
@@ -186,37 +152,26 @@ async function driveRead(token, filename) {
   try { return await r.json(); } catch { return null; }
 }
 
-// Generic: write JSON object to Drive file
 async function driveWrite(token, filename, obj) {
   const fileId = await driveFileId(token, filename);
   const form = new FormData();
-  form.append('metadata', new Blob(
-    [JSON.stringify({ mimeType: 'application/json' })],
-    { type: 'application/json' }
-  ));
-  form.append('file', new Blob(
-    [JSON.stringify(obj)],
-    { type: 'application/json' }
-  ));
+  form.append('metadata', new Blob([JSON.stringify({ mimeType: 'application/json' })], { type: 'application/json' }));
+  form.append('file', new Blob([JSON.stringify(obj)], { type: 'application/json' }));
   await fetch(
     `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`,
     { method: 'PATCH', headers: { Authorization: `Bearer ${token}` }, body: form }
   );
 }
 
-// Tags merge strategy: union of local + Drive, local timestamp wins on conflict
-// Both are { [eventId]: epochMs }
 function mergeTags(local, remote) {
   if (!remote) return local;
   const merged = { ...remote };
   Object.entries(local).forEach(([id, ts]) => {
-    // Keep whichever timestamp is more recent (i.e., more recently saved)
     if (!merged[id] || ts > merged[id]) merged[id] = ts;
   });
   return merged;
 }
 
-// Debounce helper for Drive tag writes
 function debounce(fn, ms) {
   let timer;
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
@@ -224,30 +179,24 @@ function debounce(fn, ms) {
 
 // ── localStorage helpers ─────────────────────────────────────────
 const lsGet = (key, fallback = null) => {
-  try {
-    const v = localStorage.getItem(key);
-    return v ? JSON.parse(v) : fallback;
-  } catch {
-    return fallback;
-  }
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
 };
-const lsSet = (key, val) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(val));
-  } catch {}
-};
+const lsSet = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} };
 
-// ── Artist name helper — a field may be array or string ──────────
+// ── Artist name helper ───────────────────────────────────────────
 const fmtA = (a) => {
   if (!a) return '';
   if (Array.isArray(a)) return a.join(' · ');
   return String(a);
 };
 
-// ── Genre taxonomy (15 buckets) ───────────────────────────────────
-// ── Genre taxonomy — matches bay_shows_taxonomy_json v2 exactly ──
-// Keys ARE the top-level genre strings used in event.g[] arrays.
-// Colors from taxonomy sheet; 'other' is a local fallback only.
+const artistArray = (a) => {
+  if (!a) return [];
+  if (Array.isArray(a)) return a;
+  return [String(a)];
+};
+
+// ── Genre taxonomy ───────────────────────────────────────────────
 const GENRES = {
   'Electronic':           { label: 'Electronic',        color: '#5b6cff' },
   'Hip-Hop/R&B':          { label: 'Hip-Hop / R&B',     color: '#e07b3d' },
@@ -265,7 +214,7 @@ const GENRES = {
   'Comedy':               { label: 'Comedy',             color: '#ca8a04' },
   'other':                { label: 'Other',              color: '#888899' },
 };
-// Subgenres for each top — from bay_shows_taxonomy_json v2 subToTop map
+
 const SUBGENRES_BY_TOP = {
   'Electronic':         ['Bass', 'Club/Global', 'Disco/Funk', 'EDM/Dance Pop', 'House', 'Synthwave/EBM', 'Techno', 'Trance/Hard Dance'],
   'Hip-Hop/R&B':        ['Hip-Hop', 'Lo-fi/Downtempo', 'R&B/Soul', 'Trap'],
@@ -283,27 +232,20 @@ const SUBGENRES_BY_TOP = {
   'Comedy':             ['Comedy'],
 };
 
-// GENRE_KEYS excludes the local 'other' fallback from filter chips
 const GENRE_KEYS = Object.keys(GENRES).filter(k => k !== 'other');
 
-// Resolve event.g[] to a GENRES key.
-// Events from bay_shows_merged use exact taxonomy top strings (e.g. "Punk/HC"),
-// so this is mostly a direct lookup with a lowercase fallback for legacy data.
 const resolveGenre = (g) => {
   if (!g) return 'other';
   const arr = Array.isArray(g) ? g : [g];
   for (const raw of arr) {
-    if (GENRES[raw]) return raw;                       // exact match (new data)
-    // Case-insensitive fallback for any legacy data
+    if (GENRES[raw]) return raw;
     const found = Object.keys(GENRES).find(k => k.toLowerCase() === raw.toLowerCase().trim());
     if (found) return found;
   }
   return 'other';
 };
 
-// ── Regions — match actual r field values from Apps Script ────────
-// Data uses: "SF", "East Bay", "Peninsula/South Bay", "North Bay",
-//            "Santa Cruz", "Berkeley" (sometimes separate)
+// ── Regions ──────────────────────────────────────────────────────
 const REGIONS = {
   'SF':                 'San Francisco',
   'East Bay':           'Oakland / East Bay',
@@ -312,57 +254,174 @@ const REGIONS = {
   'Santa Cruz':         'Santa Cruz',
   'Berkeley':           'Berkeley',
 };
-// Normalise r field for display
 const fmtRegion = (r) => REGIONS[r] || r || '';
-
-// Subgenre array → readable string
 const fmtSg = (sg) => {
   if (!sg) return '';
   if (Array.isArray(sg)) return sg.filter(Boolean).join(', ');
   return String(sg);
 };
 
-// ── Data fetch with 6h TTL ────────────────────────────────────────
+// ── DJ classification ────────────────────────────────────────────
+// Priority: manual override > has _mbLinks (known recording artist) > source default
+function classifyDJ(event, djOverrides) {
+  const override = djOverrides && djOverrides[event.id];
+  if (override === 'live') return false;
+  if (override === 'dj') return true;
+  // Has MB/Last.fm data → treat as live artist regardless of source
+  if (event._mbLinks && Object.keys(event._mbLinks).length > 0) return false;
+  // Source default
+  return event.so === '19hz';
+}
+
+// ── Time / end-time inference ─────────────────────────────────────
+const pad = n => String(n).padStart(2, '0');
+
+// Parse "HH:MM" or "H:MM" → minutes since midnight, or null
+function parseTimeStr(t) {
+  if (!t) return null;
+  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return parseInt(m[1]) * 60 + parseInt(m[2]);
+}
+
+// Format minutes since midnight → "HH:MM"
+function minsToStr(mins) {
+  const h = Math.floor(mins / 60) % 24;
+  const m = mins % 60;
+  return `${pad(h)}:${pad(m)}`;
+}
+
+// Is date string a weekend day (Fri or Sat night = Fri/Sat/Sun morning)?
+function isWeekendDate(dateStr) {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const dow = new Date(y, mo - 1, d).getDay();
+  return dow === 5 || dow === 6; // Fri or Sat
+}
+
+// Infer end time from start time, artist count, event type
+// Returns minutes since midnight (may exceed 1440 for next-day)
+function inferEndMins(startMins, event) {
+  const numActs = artistArray(event.a).length || 1;
+  const isWeekend = isWeekendDate(event.d);
+  const isDJ = event._isDJ;
+
+  if (isDJ) {
+    // DJ sets: nights go long
+    return startMins + (isWeekend ? 5 * 60 : 4 * 60);
+  }
+
+  // Live shows: ~45-60min per act + opener padding
+  // Matinee/afternoon: shorter; night: standard
+  if (startMins < 12 * 60) {
+    // Matinee
+    return startMins + Math.min(numActs * 50, 150);
+  } else if (startMins < 17 * 60) {
+    // Afternoon
+    return startMins + Math.min(numActs * 55, 180);
+  } else if (startMins < 21 * 60) {
+    // Evening (before 9pm)
+    const base = isWeekend ? 4 * 60 : 3 * 60;
+    return startMins + Math.min(numActs * 60 + 30, base);
+  } else {
+    // Late night (9pm+)
+    return startMins + (isWeekend ? 5 * 60 : 4 * 60);
+  }
+}
+
+// Determine effective start minutes (defaulting no-time to 19:00)
+function effectiveStartMins(event) {
+  const t = event.t_show || event.t;
+  const parsed = parseTimeStr(t);
+  return parsed !== null ? parsed : 19 * 60; // 7pm default for unknown
+}
+
+// Time bucket based on effective start time
+// The old bug: events starting after midnight (e.g. 00:30) got bucket by raw clock hour
+// Fix: any show with no time defaults to evening; midnight+ shows are "night"
+function timeBucket(event) {
+  const mins = effectiveStartMins(event);
+  // Normalise to 0-1439 for bucket purposes
+  const h = Math.floor(mins / 60) % 24;
+  if (h >= 6 && h < 12) return 'matinee';
+  if (h >= 12 && h < 17) return 'afternoon';
+  if (h >= 17 && h < 21) return 'evening';
+  return 'night'; // 21:00+ OR 00:00-05:59
+}
+
+const timeBucketLabel = {
+  'matinee':   '☀ Matinee',
+  'afternoon': '🌤 Afternoon',
+  'evening':   '🌆 Evening',
+  'night':     '🌙 Night'
+};
+const TB_ORDER = ['matinee', 'afternoon', 'evening', 'night'];
+
+// Has this event ended? (use inferred end time if no explicit end)
+function hasEnded(event) {
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const todayStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+
+  if (event.d > todayStr) return false; // future date
+  if (event.d < todayStr) return true;  // past date
+
+  // Same day — check time
+  const startMins = effectiveStartMins(event);
+  const explicitEnd = parseTimeStr(event.te);
+  let endMins;
+  if (explicitEnd !== null) {
+    // If explicit end looks earlier than start, it wraps midnight
+    endMins = explicitEnd <= startMins ? explicitEnd + 1440 : explicitEnd;
+  } else {
+    endMins = inferEndMins(startMins, event);
+  }
+
+  // Normalise for comparison (today's clock vs today's event window)
+  if (endMins >= 1440) {
+    // Ends after midnight — not ended unless nowMins is past (endMins % 1440) tomorrow
+    // Simplification: if it's still "today" and end would be tomorrow, not ended
+    return false;
+  }
+  return nowMins > endMins;
+}
+
+// Sort key: midpoint of start + inferred end
+function midpointMins(event) {
+  const start = effectiveStartMins(event);
+  const end = inferEndMins(start, event);
+  return (start + end) / 2;
+}
+
+// ── Data fetch ────────────────────────────────────────────────────
 async function fetchEvents() {
-  // Check cache
   const cached = lsGet(CACHE_KEY);
   if (cached && cached.ts && Date.now() - cached.ts < TTL_MS && Array.isArray(cached.events)) {
     return { events: cached.events, meta: cached.meta || null, fromCache: true, ts: cached.ts };
   }
-  // Fetch live
   const resp = await fetch(DRIVE_URL);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const text = await resp.text();
   const trimmed = text.replace(/^\uFEFF/, '').replace(/[\r\n]/g, '').trim();
-
   let events, meta = null;
-
-  // Try new format: { _meta, events[] }
   const objStart = trimmed.indexOf('{');
   if (objStart !== -1) {
     try {
       const parsed = JSON.parse(trimmed.slice(objStart));
-      if (parsed._meta && Array.isArray(parsed.events)) {
-        meta = parsed._meta;
-        events = parsed.events;
-      }
+      if (parsed._meta && Array.isArray(parsed.events)) { meta = parsed._meta; events = parsed.events; }
     } catch {}
   }
-  // Fallback: bare array (legacy)
   if (!events) {
     const arrStart = trimmed.indexOf('[');
     const arrEnd = trimmed.lastIndexOf(']');
     if (arrStart === -1 || arrEnd === -1) throw new Error('No JSON found in document');
     events = JSON.parse(trimmed.slice(arrStart, arrEnd + 1));
   }
-
   const ts = Date.now();
   lsSet(CACHE_KEY, { events, meta, ts });
   return { events, meta, fromCache: false, ts };
 }
 
 // ── Date helpers ──────────────────────────────────────────────────
-const pad = n => String(n).padStart(2, '0');
 const todayStr = () => {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -382,816 +441,385 @@ const gcalUrl = event => {
   const base = 'https://calendar.google.com/calendar/render?action=TEMPLATE';
   const title = encodeURIComponent(`${fmtA(event.a) || event.v} @ ${event.v}`);
   const loc = encodeURIComponent(event.v);
-  // Build date from event.d (YYYY-MM-DD) + event.t (HH:MM or similar)
   const dt = event.d ? event.d.replace(/-/g, '') : '';
   const params = `&text=${title}&location=${loc}&dates=${dt}/${dt}`;
   return base + params;
 };
 
-// ── Time-of-day dividers ──────────────────────────────────────────
-const timeBucket = t => {
-  if (!t) return 'night';
-  const [h] = t.split(':').map(Number);
-  if (h >= 6 && h < 12) return 'afternoon-early'; // matinee
-  if (h >= 12 && h < 17) return 'afternoon';
-  if (h >= 17 && h < 20) return 'evening';
-  return 'night';
-};
-const timeBucketLabel = {
-  'afternoon-early': '☀ Matinee',
-  afternoon: '🌤 Afternoon',
-  evening: '🌆 Evening',
-  night: '🌙 Night'
-};
-
-// ── Inline styles (CSS-in-JS) ─────────────────────────────────────
-const S = {
-  app: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100vh',
-    background: 'var(--bg)',
-    overflow: 'hidden'
-  },
-  header: {
-    padding: '12px 16px 10px',
-    borderBottom: '1px solid var(--border2)',
-    paddingTop: 'calc(12px + var(--safe-top))',
-    background: 'var(--bg)',
-    flexShrink: 0,
-    zIndex: 10
-  },
-  headerRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px'
-  },
-  logo: {
-    fontSize: '22px',
-    lineHeight: 1,
-    color: 'var(--accent)',
-    flexShrink: 0
-  },
-  title: {
-    fontSize: '16px',
-    fontWeight: 700,
-    letterSpacing: '0.08em',
-    color: 'var(--text)',
-    flex: 1
-  },
-  subtitle: {
-    fontSize: '10px',
-    color: 'var(--text3)',
-    letterSpacing: '0.06em'
-  },
-  refreshBtn: {
-    fontSize: '11px',
-    color: 'var(--text2)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    padding: '4px 8px',
-    flexShrink: 0
-  },
-  filters: {
-    overflowX: 'auto',
-    padding: '8px 16px',
-    borderBottom: '1px solid var(--border2)',
-    display: 'flex',
-    gap: '6px',
-    flexShrink: 0,
-    background: 'var(--bg)',
-    scrollbarWidth: 'none'
-  },
-  filterChip: active => ({
-    fontSize: '10px',
-    padding: '3px 8px',
-    borderRadius: '20px',
-    border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-    color: active ? 'var(--bg)' : 'var(--text2)',
-    background: active ? 'var(--accent)' : 'transparent',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-    letterSpacing: '0.05em',
-    transition: 'all 0.12s'
-  }),
-  genreChip: (color, active) => ({
-    fontSize: '10px',
-    padding: '3px 8px',
-    borderRadius: '20px',
-    border: `1px solid ${active ? color : 'var(--border)'}`,
-    color: active ? 'var(--bg)' : color,
-    background: active ? color : 'transparent',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-    letterSpacing: '0.04em',
-    transition: 'all 0.12s'
-  }),
-  scroll: {
-    flex: 1,
-    overflowY: 'auto',
-    paddingBottom: 'calc(16px + var(--safe-bottom))'
-  },
-  dayGroup: {
-    padding: '0'
-  },
-  dayHeader: {
-    padding: '10px 16px 6px',
-    fontSize: '11px',
-    fontWeight: 700,
-    letterSpacing: '0.12em',
-    color: 'var(--text3)',
-    textTransform: 'uppercase',
-    position: 'sticky',
-    top: 0,
-    background: 'var(--bg)',
-    zIndex: 5,
-    borderBottom: '1px solid var(--border2)'
-  },
-  timeDivider: {
-    padding: '4px 16px',
-    fontSize: '10px',
-    color: 'var(--text3)',
-    letterSpacing: '0.08em',
-    borderBottom: '1px solid var(--border2)',
-    background: 'var(--bg2)'
-  },
-  card: rank => ({
-    padding: `${rank === 0 ? '12px' : '9px'} 16px`,
-    borderBottom: '1px solid var(--border2)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '3px',
-    cursor: 'pointer',
-    transition: 'background 0.1s',
-    background: 'transparent'
-  }),
-  cardHover: {
-    background: 'var(--bg2)'
-  },
-  artistName: rank => ({
-    fontSize: rank === 0 ? '14px' : rank === 1 ? '13px' : '12px',
-    fontWeight: rank === 0 ? 700 : rank === 1 ? 500 : 400,
-    color: 'var(--text)',
-    letterSpacing: '0.02em',
-    lineHeight: 1.3
-  }),
-  venueLine: {
-    fontSize: '11px',
-    color: 'var(--text2)',
-    display: 'flex',
-    gap: '6px',
-    alignItems: 'center',
-    flexWrap: 'wrap'
-  },
-  tag: color => ({
-    display: 'inline-block',
-    fontSize: '9px',
-    padding: '1px 5px',
-    borderRadius: '2px',
-    background: color + '22',
-    color: color,
-    border: `1px solid ${color}44`,
-    letterSpacing: '0.05em',
-    flexShrink: 0
-  }),
-  newBadge: {
-    display: 'inline-block',
-    fontSize: '9px',
-    padding: '1px 5px',
-    borderRadius: '2px',
-    background: 'var(--accent)22',
-    color: 'var(--accent)',
-    border: '1px solid var(--accent)44',
-    letterSpacing: '0.05em',
-    flexShrink: 0,
-    fontWeight: 700
-  },
-  priceBadge: {
-    fontSize: '10px',
-    color: '#47ff8e',
-    flexShrink: 0
-  },
-  ageBadge: free => ({
-    fontSize: '10px',
-    color: free ? '#47ff8e' : 'var(--text3)',
-    flexShrink: 0
-  }),
-  actionRow: {
-    display: 'flex',
-    gap: '8px',
-    marginTop: '4px',
-    flexWrap: 'wrap'
-  },
-  actionBtn: {
-    fontSize: '10px',
-    color: 'var(--text3)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    padding: '2px 7px',
-    letterSpacing: '0.04em'
-  },
-  tagBtn: active => ({
-    fontSize: '10px',
-    color: active ? 'var(--accent)' : 'var(--text3)',
-    border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-    borderRadius: 'var(--radius)',
-    padding: '2px 7px',
-    letterSpacing: '0.04em'
-  }),
-  emptyState: {
-    padding: '48px 16px',
-    textAlign: 'center',
-    color: 'var(--text3)',
-    fontSize: '12px',
-    letterSpacing: '0.06em',
-    lineHeight: 2
-  },
-  loadingWrap: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100%',
-    gap: '16px',
-    color: 'var(--text3)',
-    fontSize: '12px',
-    letterSpacing: '0.08em'
-  },
-  loadingDot: {
-    width: '6px',
-    height: '6px',
-    borderRadius: '50%',
-    background: 'var(--accent)',
-    animation: 'pulse 1s ease-in-out infinite'
-  },
-  statusBar: {
-    padding: '4px 16px',
-    fontSize: '10px',
-    color: 'var(--text3)',
-    borderTop: '1px solid var(--border2)',
-    flexShrink: 0,
-    display: 'flex',
-    gap: '8px',
-    alignItems: 'center',
-    paddingBottom: 'calc(4px + var(--safe-bottom))',
-    background: 'var(--bg)'
-  },
-  modal: {
-    position: 'fixed',
-    inset: 0,
-    background: 'rgba(0,0,0,0.8)',
-    zIndex: 100,
-    display: 'flex',
-    alignItems: 'flex-end',
-    backdropFilter: 'blur(4px)'
-  },
-  modalInner: {
-    background: 'var(--bg2)',
-    borderRadius: '12px 12px 0 0',
-    padding: '20px 16px',
-    width: '100%',
-    maxHeight: '80vh',
-    overflowY: 'auto',
-    paddingBottom: 'calc(20px + var(--safe-bottom))',
-    border: '1px solid var(--border)',
-    borderBottom: 'none'
-  },
-  modalTitle: {
-    fontSize: '13px',
-    fontWeight: 700,
-    marginBottom: '12px',
-    letterSpacing: '0.06em'
-  },
-  inputGroup: {
-    marginBottom: '12px'
-  },
-  label: {
-    fontSize: '10px',
-    color: 'var(--text3)',
-    letterSpacing: '0.08em',
-    display: 'block',
-    marginBottom: '4px'
-  },
-  input: {
-    width: '100%',
-    background: 'var(--bg3)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    color: 'var(--text)',
-    fontSize: '12px',
-    padding: '7px 10px',
-    outline: 'none',
-    fontFamily: 'var(--mono)'
-  },
-  btnPrimary: {
-    background: 'var(--accent)',
-    color: 'var(--bg)',
-    fontSize: '12px',
-    fontWeight: 700,
-    padding: '8px 16px',
-    borderRadius: 'var(--radius)',
-    letterSpacing: '0.06em',
-    width: '100%',
-    marginTop: '4px'
-  },
-  btnSecondary: {
-    background: 'transparent',
-    color: 'var(--text2)',
-    fontSize: '12px',
-    padding: '8px 16px',
-    borderRadius: 'var(--radius)',
-    border: '1px solid var(--border)',
-    letterSpacing: '0.06em',
-    width: '100%',
-    marginTop: '4px'
-  },
-  sectionToggle: {
-    display: 'flex',
-    gap: '0',
-    borderRadius: 'var(--radius)',
-    border: '1px solid var(--border)',
-    overflow: 'hidden',
-    flexShrink: 0
-  },
-  sectionBtn: active => ({
-    fontSize: '10px',
-    padding: '4px 10px',
-    background: active ? 'var(--accent)' : 'transparent',
-    color: active ? 'var(--bg)' : 'var(--text2)',
-    letterSpacing: '0.06em',
-    borderRight: '1px solid var(--border)'
-  }),
-  installBanner: {
-    padding: '10px 16px',
-    background: 'var(--bg3)',
-    borderBottom: '1px solid var(--border)',
-    fontSize: '11px',
-    color: 'var(--text2)',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    flexShrink: 0
-  }
-};
-
-// ── Pulse animation ───────────────────────────────────────────────
-const ANIM_STYLE = `
-    @keyframes pulse { 0%,100%{opacity:0.3;transform:scale(0.8)} 50%{opacity:1;transform:scale(1.2)} }
-    @keyframes spin   { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-    .card-hover:hover { background: var(--bg2) !important; }
-    .filter-scroll::-webkit-scrollbar { display: none; }
-    ::placeholder { color: var(--text3); }
-  `;
-
-// ── EventCard component ───────────────────────────────────────────
-function EventCard({
-  event,
-  rank,
-  tags,
-  onToggleTag,
-  onAction
-}) {
-  const [hovered, setHovered] = useState(false);
-  const tagged = tags && tags[event.id];
-  const genre = GENRES[resolveGenre(event.g)] || GENRES.other;
-  const newEvent = isNew(event);
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.card(rank),
-      background: hovered ? 'var(--bg2)' : 'transparent'
-    },
-    onMouseEnter: () => setHovered(true),
-    onMouseLeave: () => setHovered(false),
-    onClick: () => onAction('detail', event)
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'flex-start',
-      gap: '8px'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.artistName(rank)
-  }, fmtA(event.a) || event.v, newEvent && /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.newBadge,
-      marginLeft: '6px'
-    }
-  }, "NEW"), tagged && /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.tag('#e8ff47'),
-      marginLeft: '6px'
-    }
-  }, "\u2605")), /*#__PURE__*/React.createElement("div", {
-    style: S.venueLine
-  }, event.v && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--text2)',
-      cursor: 'pointer'
-    },
-    onClick: e => {
-      e.stopPropagation();
-      if (event.maps_url) window.open(event.maps_url, '_blank');
-    }
-  }, event.v), event.t && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--text3)'
-    }
-  }, "\xB7 ", event.t), event.r && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--text3)'
-    }
-  }, "\xB7 ", fmtRegion(event.r)))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'flex-end',
-      gap: '3px',
-      flexShrink: 0
-    }
-  }, event.p === '0' || event.p === 0 || event.pr === 'free' ? /*#__PURE__*/React.createElement("span", {
-    style: S.priceBadge
-  }, "FREE") : event.p && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: '10px',
-      color: 'var(--text3)'
-    }
-  }, "$", event.p), (event.age === 'all' || event.age === 'all-ages') && /*#__PURE__*/React.createElement("span", {
-    style: S.ageBadge(true)
-  }, "all-ages"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '5px',
-      flexWrap: 'wrap',
-      marginTop: '2px'
-    }
-  }, (Array.isArray(event.g) ? event.g : [event.g]).map((gRaw, gi) => {
-    const gResolved = GENRES[resolveGenre(gRaw)] || GENRES.other;
-    return /*#__PURE__*/React.createElement("span", { key: gi, style: S.tag(gResolved.color) }, gResolved.label);
-  }), event.sg && /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.tag('#888899'),
-      fontSize: '9px'
-    }
-  }, fmtSg(event.sg)), event.so === 'riotlist' && /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.tag('#555568'),
-      fontSize: '9px'
-    }
-  }, "riotlist"), event.so === '19hz' && /*#__PURE__*/React.createElement("span", {
-    style: {
-      ...S.tag('#555568'),
-      fontSize: '9px'
-    }
-  }, "19hz")), event.n && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '10px',
-      color: 'var(--text3)',
-      marginTop: '2px',
-      lineHeight: 1.4
-    }
-  }, event.n), /*#__PURE__*/React.createElement("div", {
-    style: S.actionRow,
-    onClick: e => e.stopPropagation()
-  }, event.lk && /*#__PURE__*/React.createElement("a", {
-    href: event.lk,
-    target: "_blank",
-    rel: "noopener",
-    style: S.actionBtn,
-    onClick: e => e.stopPropagation()
-  }, "info \u2197"), event.maps_url && /*#__PURE__*/React.createElement("a", {
-    href: event.maps_url,
-    target: "_blank",
-    rel: "noopener",
-    style: S.actionBtn,
-    onClick: e => e.stopPropagation()
-  }, "map \u2197"), /*#__PURE__*/React.createElement("a", {
-    href: gcalUrl(event),
-    target: "_blank",
-    rel: "noopener",
-    style: S.actionBtn,
-    onClick: e => e.stopPropagation()
-  }, "+ cal"), /*#__PURE__*/React.createElement("button", {
-    style: S.tagBtn(!!tagged),
-    onClick: e => {
-      e.stopPropagation();
-      onToggleTag(event.id);
-    }
-  }, tagged ? '★ saved' : '☆ save')));
+// ── Week/month navigation helpers ────────────────────────────────
+function nextDayKey(currentDay, dayKeys) {
+  const idx = dayKeys.indexOf(currentDay);
+  return idx >= 0 && idx < dayKeys.length - 1 ? dayKeys[idx + 1] : null;
+}
+function nextWeekKey(currentDay, dayKeys) {
+  // Next Monday on or after (currentDay + 1)
+  const [y, m, d] = currentDay.split('-').map(Number);
+  const cur = new Date(y, m - 1, d);
+  let target = new Date(cur);
+  target.setDate(target.getDate() + 1);
+  // Advance to next Monday
+  while (target.getDay() !== 1) target.setDate(target.getDate() + 1);
+  const targetStr = `${target.getFullYear()}-${pad(target.getMonth()+1)}-${pad(target.getDate())}`;
+  // Find the first dayKey >= targetStr
+  return dayKeys.find(k => k >= targetStr) || null;
+}
+function nextMonthKey(currentDay, dayKeys) {
+  const [y, m] = currentDay.split('-').map(Number);
+  let nm = m + 1, ny = y;
+  if (nm > 12) { nm = 1; ny++; }
+  const targetStr = `${ny}-${pad(nm)}-01`;
+  return dayKeys.find(k => k >= targetStr) || null;
 }
 
-// ── Detail modal ──────────────────────────────────────────────────
-function DetailModal({
-  event,
-  tags,
-  onToggleTag,
-  onClose,
-  onDelete
-}) {
-  if (!event) return null;
-  const genre = GENRES[resolveGenre(event.g)] || GENRES.other;
+// ── Styles ────────────────────────────────────────────────────────
+const S = {
+  app: { display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)', overflow: 'hidden' },
+  header: { padding: '12px 16px 10px', borderBottom: '1px solid var(--border2)', paddingTop: 'calc(12px + var(--safe-top))', background: 'var(--bg)', flexShrink: 0, zIndex: 10 },
+  headerRow: { display: 'flex', alignItems: 'center', gap: '10px' },
+  logo: { fontSize: '22px', lineHeight: 1, color: 'var(--accent)', flexShrink: 0 },
+  title: { fontSize: '16px', fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text)', flex: 1 },
+  subtitle: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.06em' },
+  refreshBtn: { fontSize: '11px', color: 'var(--text2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '4px 8px', flexShrink: 0 },
+  filters: { overflowX: 'auto', padding: '8px 16px', borderBottom: '1px solid var(--border2)', display: 'flex', gap: '6px', flexShrink: 0, background: 'var(--bg)', scrollbarWidth: 'none' },
+  filterChip: active => ({ fontSize: '10px', padding: '3px 8px', borderRadius: '20px', border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`, color: active ? 'var(--bg)' : 'var(--text2)', background: active ? 'var(--accent)' : 'transparent', cursor: 'pointer', whiteSpace: 'nowrap', letterSpacing: '0.05em', transition: 'all 0.12s' }),
+  genreChip: (color, active) => ({ fontSize: '10px', padding: '3px 8px', borderRadius: '20px', border: `1px solid ${active ? color : 'var(--border)'}`, color: active ? 'var(--bg)' : color, background: active ? color : 'transparent', cursor: 'pointer', whiteSpace: 'nowrap', letterSpacing: '0.04em', transition: 'all 0.12s' }),
+  scroll: { flex: 1, overflowY: 'auto', paddingBottom: 'calc(16px + var(--safe-bottom))' },
+  dayGroup: { padding: '0' },
+  dayHeader: { padding: '8px 16px 5px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.12em', color: 'var(--text3)', textTransform: 'uppercase', position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 5, borderBottom: '1px solid var(--border2)' },
+  timeDivider: { padding: '4px 16px', fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.08em', borderBottom: '1px solid var(--border2)', background: 'var(--bg2)' },
+  card: rank => ({ padding: `${rank === 0 ? '12px' : '9px'} 16px`, borderBottom: '1px solid var(--border2)', display: 'flex', flexDirection: 'column', gap: '3px', transition: 'background 0.1s', background: 'transparent' }),
+  artistName: rank => ({ fontSize: rank === 0 ? '14px' : rank === 1 ? '13px' : '12px', fontWeight: rank === 0 ? 700 : rank === 1 ? 500 : 400, color: 'var(--text)', letterSpacing: '0.02em', lineHeight: 1.3 }),
+  artistLink: { color: 'var(--text)', cursor: 'pointer', borderBottom: '1px dotted var(--border)', paddingBottom: '1px' },
+  venueLine: { fontSize: '11px', color: 'var(--text2)', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' },
+  venueLink: { color: 'var(--text2)', cursor: 'pointer', borderBottom: '1px dotted var(--border2)', paddingBottom: '1px' },
+  tag: color => ({ display: 'inline-block', fontSize: '9px', padding: '1px 5px', borderRadius: '2px', background: color + '22', color: color, border: `1px solid ${color}44`, letterSpacing: '0.05em', flexShrink: 0 }),
+  newBadge: { display: 'inline-block', fontSize: '9px', padding: '1px 5px', borderRadius: '2px', background: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44', letterSpacing: '0.05em', flexShrink: 0, fontWeight: 700 },
+  priceBadge: { fontSize: '10px', color: 'var(--green)', flexShrink: 0 },
+  ageBadge: free => ({ fontSize: '10px', color: free ? 'var(--green)' : 'var(--text3)', flexShrink: 0 }),
+  actionRow: { display: 'flex', gap: '6px', marginTop: '4px', flexWrap: 'wrap', alignItems: 'center' },
+  actionBtn: { fontSize: '10px', color: 'var(--text3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '2px 7px', letterSpacing: '0.04em' },
+  tagBtn: active => ({ fontSize: '10px', color: active ? 'var(--accent)' : 'var(--text3)', border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 'var(--radius)', padding: '2px 7px', letterSpacing: '0.04em' }),
+  ticketBtn: active => ({ fontSize: '10px', color: active ? 'var(--green)' : 'var(--text3)', border: `1px solid ${active ? 'var(--green)' : 'var(--border)'}`, borderRadius: 'var(--radius)', padding: '2px 7px', letterSpacing: '0.04em' }),
+  hideBtn: { fontSize: '10px', color: 'var(--text3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '2px 5px', letterSpacing: '0.04em', opacity: 0.7 },
+  djBadge: { display: 'inline-block', fontSize: '9px', padding: '1px 5px', borderRadius: '2px', background: '#5b6cff22', color: '#5b6cff', border: '1px solid #5b6cff44', letterSpacing: '0.05em', flexShrink: 0 },
+  emptyState: { padding: '48px 16px', textAlign: 'center', color: 'var(--text3)', fontSize: '12px', letterSpacing: '0.06em', lineHeight: 2 },
+  loadingWrap: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '16px', color: 'var(--text3)', fontSize: '12px', letterSpacing: '0.08em' },
+  loadingDot: { width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent)', animation: 'pulse 1s ease-in-out infinite' },
+  statusBar: { padding: '4px 16px', fontSize: '10px', color: 'var(--text3)', borderTop: '1px solid var(--border2)', flexShrink: 0, display: 'flex', gap: '8px', alignItems: 'center', paddingBottom: 'calc(4px + var(--safe-bottom))', background: 'var(--bg)' },
+  modal: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'flex-end', backdropFilter: 'blur(4px)' },
+  modalInner: { background: 'var(--bg2)', borderRadius: '12px 12px 0 0', padding: '20px 16px', width: '100%', maxHeight: '80vh', overflowY: 'auto', paddingBottom: 'calc(20px + var(--safe-bottom))', border: '1px solid var(--border)', borderBottom: 'none' },
+  modalTitle: { fontSize: '13px', fontWeight: 700, marginBottom: '12px', letterSpacing: '0.06em' },
+  inputGroup: { marginBottom: '12px' },
+  label: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.08em', display: 'block', marginBottom: '4px' },
+  input: { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '12px', padding: '7px 10px', outline: 'none', fontFamily: 'var(--mono)' },
+  btnPrimary: { background: 'var(--accent)', color: 'var(--bg)', fontSize: '12px', fontWeight: 700, padding: '8px 16px', borderRadius: 'var(--radius)', letterSpacing: '0.06em', width: '100%', marginTop: '4px' },
+  btnSecondary: { background: 'transparent', color: 'var(--text2)', fontSize: '12px', padding: '8px 16px', borderRadius: 'var(--radius)', border: '1px solid var(--border)', letterSpacing: '0.06em', width: '100%', marginTop: '4px' },
+  sectionToggle: { display: 'flex', gap: '0', borderRadius: 'var(--radius)', border: '1px solid var(--border)', overflow: 'hidden', flexShrink: 0 },
+  sectionBtn: active => ({ fontSize: '10px', padding: '4px 10px', background: active ? 'var(--accent)' : 'transparent', color: active ? 'var(--bg)' : 'var(--text2)', letterSpacing: '0.06em', borderRight: '1px solid var(--border)' }),
+  installBanner: { padding: '10px 16px', background: 'var(--bg3)', borderBottom: '1px solid var(--border)', fontSize: '11px', color: 'var(--text2)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 },
+  searchBar: { padding: '7px 16px', borderBottom: '1px solid var(--border2)', background: 'var(--bg)', flexShrink: 0 },
+  searchInput: { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '20px', color: 'var(--text)', fontSize: '12px', padding: '5px 12px', outline: 'none', fontFamily: 'var(--mono)' },
+  moreFiltersPanel: { background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '6px', margin: '0 12px 8px', padding: '12px', flexShrink: 0 },
+  jumpLinks: { display: 'flex', gap: '8px', marginLeft: 'auto' },
+  jumpLink: { fontSize: '9px', color: 'var(--text3)', cursor: 'pointer', letterSpacing: '0.05em', textDecoration: 'underline', textDecorationColor: 'var(--border)', padding: '2px 0' },
+};
+
+// ── Animations ────────────────────────────────────────────────────
+const ANIM_STYLE = `
+  @keyframes pulse { 0%,100%{opacity:0.3;transform:scale(0.8)} 50%{opacity:1;transform:scale(1.2)} }
+  @keyframes spin   { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+  @keyframes slideDown { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:translateY(0)} }
+  .card-hover:hover { background: var(--bg2) !important; }
+  .filter-scroll::-webkit-scrollbar { display: none; }
+  ::placeholder { color: var(--text3); }
+  .more-panel { animation: slideDown 0.15s ease; }
+`;
+
+// ── EventCard ─────────────────────────────────────────────────────
+function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTag, onToggleTicket, onHide, onToggleDJ, onArtistClick, onVenueClick }) {
   const tagged = tags && tags[event.id];
-  useEffect(() => {
-    const handleKey = e => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, []);
-  return /*#__PURE__*/React.createElement("div", {
-    style: S.modal,
-    onClick: onClose
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.modalInner,
-    onClick: e => e.stopPropagation()
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'flex-start',
-      gap: '8px',
-      marginBottom: '12px'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.modalTitle
-  }, fmtA(event.a) || event.v), event.a && event.v && fmtA(event.a) !== event.v && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '12px',
-      color: 'var(--text2)',
-      marginBottom: '4px'
-    }
-  }, event.v)), /*#__PURE__*/React.createElement("button", {
-    style: {
-      color: 'var(--text3)',
-      fontSize: '18px',
-      lineHeight: 1,
-      padding: '0 4px'
-    },
-    onClick: onClose
-  }, "\xD7")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '8px'
-    }
-  }, event.d && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '11px',
-      color: 'var(--text2)'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--text3)'
-    }
-  }, "DATE"), "  ", dateLabel(event.d), (event.t_show || event.t) ? ` at ${event.t_show || event.t}` : '', event.te ? `–${event.te}` : ''), event.v && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '11px',
-      color: 'var(--text2)'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--text3)'
-    }
-  }, "VENUE"), " ", event.v, event.r ? ` · ${fmtRegion(event.r)}` : ''), (event.p || event.pr) && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '11px',
-      color: 'var(--text2)'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--text3)'
-    }
-  }, "PRICE"), " ", event.pr === 'free' || event.p === '0' ? 'Free' : event.p ? `$${event.p}` : event.pr), event.age && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '11px',
-      color: 'var(--text2)'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--text3)'
-    }
-  }, "AGES"), "  ", event.age), event.n && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '11px',
-      color: 'var(--text)',
-      lineHeight: 1.6,
-      borderTop: '1px solid var(--border2)',
-      paddingTop: '8px',
-      marginTop: '4px'
-    }
-  }, event.n), event._mbLinks && /*#__PURE__*/React.createElement("div", {
-    style: {
-      borderTop: '1px solid var(--border2)',
-      paddingTop: '8px',
-      marginTop: '4px'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: { fontSize: '9px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '5px' }
-  }, "LISTEN"), /*#__PURE__*/React.createElement("div", {
-    style: { display: 'flex', gap: '5px', flexWrap: 'wrap' }
-  }, [
+  const hasTicket = tickets && tickets[event.id];
+  const isHidden = hidden && hidden[event.id];
+  const genre = GENRES[resolveGenre(event.g)] || GENRES.other;
+  const newEvent = isNew(event);
+  const isDJ = event._isDJ;
+
+  if (isHidden) return null;
+
+  const artists = artistArray(event.a);
+
+  return React.createElement("div", {
+    className: 'card-hover',
+    style: { ...S.card(rank), position: 'relative' }
+  },
+    // Artist name row
+    React.createElement("div", { style: { display: 'flex', alignItems: 'flex-start', gap: '8px' } },
+      React.createElement("div", { style: { flex: 1 } },
+        // Artist names — each individually tappable
+        React.createElement("div", { style: S.artistName(rank) },
+          artists.length === 0
+            ? React.createElement("span", { style: S.artistLink, onClick: () => onVenueClick && onVenueClick(event.v) }, event.v)
+            : artists.map((artist, ai) =>
+                React.createElement(React.Fragment, { key: ai },
+                  ai > 0 && React.createElement("span", { style: { color: 'var(--text3)' } }, ' · '),
+                  React.createElement("span", {
+                    style: S.artistLink,
+                    onClick: (e) => { e.stopPropagation(); onArtistClick && onArtistClick(artist, event); }
+                  }, artist)
+                )
+              ),
+          newEvent && React.createElement("span", { style: { ...S.newBadge, marginLeft: '6px' } }, "NEW"),
+          tagged && React.createElement("span", { style: { ...S.tag('#e8ff47'), marginLeft: '6px' } }, "★"),
+          hasTicket && React.createElement("span", { style: { ...S.tag('var(--green)'), marginLeft: '6px' } }, "🎫"),
+          isDJ && React.createElement("span", { style: { ...S.djBadge, marginLeft: '6px' } }, "DJ")
+        ),
+        // Venue + time + region
+        React.createElement("div", { style: S.venueLine },
+          event.v && React.createElement("span", {
+            style: S.venueLink,
+            onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
+          }, event.v),
+          event.t && React.createElement("span", { style: { color: 'var(--text3)' } }, '· ', event.t),
+          event.te && React.createElement("span", { style: { color: 'var(--text3)' } }, '–', event.te),
+          event.r && React.createElement("span", { style: { color: 'var(--text3)' } }, '· ', fmtRegion(event.r))
+        )
+      ),
+      // Right side: price + ages
+      React.createElement("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px', flexShrink: 0 } },
+        event.p === '0' || event.p === 0 || event.pr === 'free'
+          ? React.createElement("span", { style: S.priceBadge }, "FREE")
+          : event.p && React.createElement("span", { style: { fontSize: '10px', color: 'var(--text3)' } }, "$", event.p),
+        (event.age === 'all' || event.age === 'all-ages') && React.createElement("span", { style: S.ageBadge(true) }, "all-ages")
+      )
+    ),
+    // Genre tags
+    React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', marginTop: '2px' } },
+      (Array.isArray(event.g) ? event.g : [event.g]).map((gRaw, gi) => {
+        const gResolved = GENRES[resolveGenre(gRaw)] || GENRES.other;
+        return React.createElement("span", { key: gi, style: S.tag(gResolved.color) }, gResolved.label);
+      }),
+      event.sg && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, fmtSg(event.sg)),
+      event.so === 'riotlist' && React.createElement("span", { style: { ...S.tag('#555568'), fontSize: '9px' } }, "riotlist"),
+      event.so === '19hz' && React.createElement("span", { style: { ...S.tag('#555568'), fontSize: '9px' } }, "19hz")
+    ),
+    event.n && React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', marginTop: '2px', lineHeight: 1.4 } }, event.n),
+    // Action row
+    React.createElement("div", { style: S.actionRow, onClick: e => e.stopPropagation() },
+      event.lk && React.createElement("a", { href: event.lk, target: "_blank", rel: "noopener", style: S.actionBtn }, "info ↗"),
+      event.maps_url && React.createElement("a", { href: event.maps_url, target: "_blank", rel: "noopener", style: S.actionBtn }, "map ↗"),
+      React.createElement("a", { href: gcalUrl(event), target: "_blank", rel: "noopener", style: S.actionBtn }, "+ cal"),
+      React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag(event.id) }, tagged ? '★' : '☆'),
+      React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket(event.id) }, hasTicket ? '🎫 got tix' : '🎫'),
+      React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => onHide(event.id) }, "✕"),
+      isDJ && React.createElement("button", {
+        style: { ...S.actionBtn, fontSize: '9px', color: 'var(--text3)' },
+        title: 'Mark as live event',
+        onClick: () => onToggleDJ(event.id, 'live')
+      }, "mark live"),
+      !isDJ && event.so === '19hz' && React.createElement("button", {
+        style: { ...S.actionBtn, fontSize: '9px', color: 'var(--text3)' },
+        title: 'Mark as DJ/club event',
+        onClick: () => onToggleDJ(event.id, 'dj')
+      }, "mark DJ")
+    )
+  );
+}
+
+// ── Artist Panel (slide-up sheet) ─────────────────────────────────
+function ArtistPanel({ artistName, events, onClose }) {
+  const artistEvents = events.filter(e =>
+    artistArray(e.a).some(a => a.toLowerCase() === artistName.toLowerCase())
+  ).sort((a, b) => a.d < b.d ? -1 : 1);
+
+  // Find MB links from any event featuring this artist
+  const mbLinks = artistEvents.reduce((acc, e) => {
+    if (e._mbLinks) Object.assign(acc, e._mbLinks);
+    return acc;
+  }, {});
+
+  const LINK_DEFS = [
     ['spotify', 'Spotify', '#1db954'],
     ['bandcamp', 'Bandcamp', '#4a8fbb'],
     ['apple_music', 'Apple Music', '#fa57c1'],
     ['youtube', 'YouTube', '#ff4444'],
     ['lastfm', 'Last.fm', '#d51007'],
     ['homepage', 'Site', '#888'],
-  ].filter(([k]) => event._mbLinks[k]).map(([k, label, color]) =>
-    /*#__PURE__*/React.createElement("a", {
-      key: k,
-      href: event._mbLinks[k],
-      target: "_blank",
-      rel: "noopener",
-      style: { fontSize: '9px', padding: '2px 7px', borderRadius: '3px',
-               border: `1px solid ${color}44`, color, background: `${color}11`,
-               textDecoration: 'none', whiteSpace: 'nowrap' }
-    }, label)
-  )))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '5px',
-      flexWrap: 'wrap',
-      margin: '12px 0 8px'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: S.tag(genre.color)
-  }, genre.label), event.sg && /*#__PURE__*/React.createElement("span", {
-    style: S.tag('#888899')
-  }, fmtSg(event.sg))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '8px',
-      marginTop: '12px'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    style: S.tagBtn(!!tagged),
-    onClick: () => onToggleTag(event.id)
-  }, tagged ? '★ Saved to my list' : '☆ Save to my list'), event.lk && /*#__PURE__*/React.createElement("a", {
-    href: event.lk,
-    target: "_blank",
-    rel: "noopener",
-    style: {
-      ...S.actionBtn,
-      textAlign: 'center',
-      display: 'block'
-    }
-  }, "More info \u2197"), event.maps_url && /*#__PURE__*/React.createElement("a", {
-    href: event.maps_url,
-    target: "_blank",
-    rel: "noopener",
-    style: {
-      ...S.actionBtn,
-      textAlign: 'center',
-      display: 'block'
-    }
-  }, "Directions \u2197"), /*#__PURE__*/React.createElement("a", {
-    href: gcalUrl(event),
-    target: "_blank",
-    rel: "noopener",
-    style: {
-      ...S.actionBtn,
-      textAlign: 'center',
-      display: 'block'
-    }
-  }, "Add to Google Calendar"), onDelete && /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.btnSecondary,
-      color: 'var(--red)',
-      borderColor: 'var(--red)44',
-      marginTop: '8px'
-    },
-    onClick: onDelete
-  }, "Delete event"))));
+  ];
+
+  useEffect(() => {
+    const h = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, []);
+
+  return React.createElement("div", { style: S.modal, onClick: onClose },
+    React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
+      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' } },
+        React.createElement("div", { style: S.modalTitle }, artistName),
+        React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
+      ),
+      // Listen links
+      Object.keys(mbLinks).length > 0 && React.createElement("div", { style: { marginBottom: '12px' } },
+        React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '5px' } }, "LISTEN"),
+        React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap' } },
+          LINK_DEFS.filter(([k]) => mbLinks[k]).map(([k, label, color]) =>
+            React.createElement("a", { key: k, href: mbLinks[k], target: "_blank", rel: "noopener",
+              style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: `1px solid ${color}44`, color, background: `${color}11`, textDecoration: 'none' } }, label)
+          )
+        )
+      ),
+      // Search links
+      React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' } },
+        React.createElement("a", { href: `https://open.spotify.com/search/${encodeURIComponent(artistName)}`, target: '_blank', rel: 'noopener', style: { ...S.actionBtn } }, "Spotify ↗"),
+        React.createElement("a", { href: `https://bandcamp.com/search?q=${encodeURIComponent(artistName)}`, target: '_blank', rel: 'noopener', style: { ...S.actionBtn } }, "Bandcamp ↗"),
+        React.createElement("a", { href: `https://www.google.com/search?q=${encodeURIComponent(artistName + ' band')}`, target: '_blank', rel: 'noopener', style: { ...S.actionBtn } }, "Google ↗")
+      ),
+      // Upcoming shows
+      artistEvents.length > 0 && React.createElement("div", null,
+        React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px' } },
+          `UPCOMING SHOWS (${artistEvents.length})`),
+        artistEvents.map(e =>
+          React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
+            React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500 } }, dateLabel(e.d)),
+            React.createElement("div", null, e.v, e.t ? ` · ${e.t}` : '', e.r ? ` · ${fmtRegion(e.r)}` : ''),
+            e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: { ...S.actionBtn, display: 'inline-block', marginTop: '4px' } }, "info ↗")
+          )
+        )
+      ),
+      artistEvents.length === 0 && React.createElement("div", { style: { color: 'var(--text3)', fontSize: '11px' } }, "No upcoming shows found in current data.")
+    )
+  );
 }
 
-// ── Manual add modal ──────────────────────────────────────────────
-function AddModal({
-  onSave,
-  onClose
-}) {
-  const [form, setForm] = useState({
-    a: '',
-    v: '',
-    d: todayStr(),
-    t: '',
-    g: 'rock',
-    p: '',
-    age: '',
-    n: '',
-    lk: ''
-  });
-  const set = k => e => setForm(f => ({
-    ...f,
-    [k]: e.target.value
-  }));
+// ── Venue Panel ───────────────────────────────────────────────────
+function VenuePanel({ venueName, events, onClose }) {
+  const venueEvents = events.filter(e => e.v === venueName).sort((a, b) => a.d < b.d ? -1 : 1);
+  // Get venue metadata from first event
+  const sample = venueEvents[0] || {};
+
+  useEffect(() => {
+    const h = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, []);
+
+  return React.createElement("div", { style: S.modal, onClick: onClose },
+    React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
+      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' } },
+        React.createElement("div", null,
+          React.createElement("div", { style: S.modalTitle }, venueName),
+          sample.r && React.createElement("div", { style: { fontSize: '11px', color: 'var(--text2)', marginTop: '2px' } }, fmtRegion(sample.r))
+        ),
+        React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
+      ),
+      // Info row
+      React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' } },
+        sample.maps_url && React.createElement("a", { href: sample.maps_url, target: "_blank", rel: "noopener", style: S.actionBtn }, "Directions ↗"),
+        React.createElement("span", { style: { ...S.tag(GENRES[resolveGenre(sample.g)]?.color || '#888899'), fontSize: '9px' } },
+          GENRES[resolveGenre(sample.g)]?.label || 'Various')
+      ),
+      // Upcoming shows at this venue
+      React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px' } },
+        `UPCOMING SHOWS (${venueEvents.length})`),
+      venueEvents.map(e =>
+        React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
+          React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500 } }, dateLabel(e.d), e.t ? ` · ${e.t}` : ''),
+          React.createElement("div", null, fmtA(e.a) || '—'),
+          e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: { ...S.actionBtn, display: 'inline-block', marginTop: '4px' } }, "info ↗")
+        )
+      )
+    )
+  );
+}
+
+// ── More Filters Panel ────────────────────────────────────────────
+function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
+  const [local, setLocal] = useState({ ...prefs });
+  const toggle = k => setLocal(p => ({ ...p, [k]: !p[k] }));
+
+  const Row = ({ label, field, desc }) =>
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border2)' } },
+      React.createElement("div", null,
+        React.createElement("div", { style: { fontSize: '11px', color: 'var(--text)' } }, label),
+        desc && React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', marginTop: '1px' } }, desc)
+      ),
+      React.createElement("button", {
+        style: { ...S.filterChip(local[field]), flexShrink: 0 },
+        onClick: () => toggle(field)
+      }, local[field] ? 'ON' : 'OFF')
+    );
+
+  return React.createElement("div", { className: 'more-panel', style: S.moreFiltersPanel },
+    React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px' } }, "MORE FILTERS"),
+    React.createElement(Row, { label: "Free only", field: "freeOnly" }),
+    React.createElement(Row, { label: "All ages only", field: "allAgesOnly" }),
+    React.createElement(Row, { label: "Saved shows only", field: "showSaved", desc: "Shows you've starred" }),
+    React.createElement(Row, { label: "Has tickets", field: "showTickets", desc: "Events you've marked as purchased" }),
+    React.createElement(Row, { label: "Starred (no ticket)", field: "showStarredNoTicket", desc: "Liked but not yet ticketed" }),
+    React.createElement(Row, { label: "Show hidden events", field: "showHidden", desc: "Events you've dismissed with ✕" }),
+    React.createElement(Row, { label: "Show DJ / club events", field: "showDJ", desc: "Hidden by default — 19hz DJ nights etc." }),
+    React.createElement(Row, { label: "Live events only", field: "liveOnly", desc: "Exclude DJ / club events" }),
+    React.createElement("div", { style: { display: 'flex', gap: '8px', marginTop: '12px' } },
+      React.createElement("button", { style: { ...S.btnPrimary, flex: 1, marginTop: 0 }, onClick: () => { savePrefs({ ...prefs, ...local }); onClose(); } }, "Save"),
+      React.createElement("button", { style: { ...S.btnSecondary, flex: 1, marginTop: 0 }, onClick: onClose }, "Cancel")
+    )
+  );
+}
+
+// ── Add Modal ─────────────────────────────────────────────────────
+function AddModal({ onSave, onClose }) {
+  const [form, setForm] = useState({ a: '', v: '', d: todayStr(), t: '', g: 'Rock', p: '', age: '', n: '', lk: '' });
+  const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
   const handleSave = () => {
     if (!form.a && !form.v) return;
     const id = `manual-${Date.now()}`;
-    onSave({
-      ...form,
-      id,
-      so: 'manual',
-      da: Date.now(),
-      dm: Date.now()
-    });
+    onSave({ ...form, id, so: 'manual', da: Date.now(), dm: Date.now() });
     onClose();
   };
-  return /*#__PURE__*/React.createElement("div", {
-    style: S.modal,
-    onClick: onClose
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.modalInner,
-    onClick: e => e.stopPropagation()
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.modalTitle
-  }, "Add Event"), [['a', 'Artist / Headliner'], ['v', 'Venue'], ['d', 'Date (YYYY-MM-DD)'], ['t', 'Time (HH:MM)'], ['p', 'Price'], ['lk', 'Link']].map(([k, label]) => /*#__PURE__*/React.createElement("div", {
-    key: k,
-    style: S.inputGroup
-  }, /*#__PURE__*/React.createElement("label", {
-    style: S.label
-  }, label), /*#__PURE__*/React.createElement("input", {
-    style: S.input,
-    value: form[k],
-    onChange: set(k)
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: S.inputGroup
-  }, /*#__PURE__*/React.createElement("label", {
-    style: S.label
-  }, "Genre"), /*#__PURE__*/React.createElement("select", {
-    style: S.input,
-    value: form.g,
-    onChange: set('g')
-  }, GENRE_KEYS.map(g => /*#__PURE__*/React.createElement("option", {
-    key: g,
-    value: g
-  }, GENRES[g].label)))), /*#__PURE__*/React.createElement("div", {
-    style: S.inputGroup
-  }, /*#__PURE__*/React.createElement("label", {
-    style: S.label
-  }, "Ages"), /*#__PURE__*/React.createElement("select", {
-    style: S.input,
-    value: form.age,
-    onChange: set('age')
-  }, /*#__PURE__*/React.createElement("option", {
-    value: ""
-  }, "\u2014"), /*#__PURE__*/React.createElement("option", {
-    value: "all"
-  }, "All ages"), /*#__PURE__*/React.createElement("option", {
-    value: "21+"
-  }, "21+"), /*#__PURE__*/React.createElement("option", {
-    value: "18+"
-  }, "18+"))), /*#__PURE__*/React.createElement("div", {
-    style: S.inputGroup
-  }, /*#__PURE__*/React.createElement("label", {
-    style: S.label
-  }, "Notes"), /*#__PURE__*/React.createElement("textarea", {
-    style: {
-      ...S.input,
-      height: '60px',
-      resize: 'vertical'
-    },
-    value: form.n,
-    onChange: set('n')
-  })), /*#__PURE__*/React.createElement("button", {
-    style: S.btnPrimary,
-    onClick: handleSave
-  }, "Save Event"), /*#__PURE__*/React.createElement("button", {
-    style: S.btnSecondary,
-    onClick: onClose
-  }, "Cancel")));
+  return React.createElement("div", { style: S.modal, onClick: onClose },
+    React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
+      React.createElement("div", { style: S.modalTitle }, "Add Event"),
+      [['a', 'Artist / Headliner'], ['v', 'Venue'], ['d', 'Date (YYYY-MM-DD)'], ['t', 'Time (HH:MM)'], ['p', 'Price'], ['lk', 'Link']].map(([k, label]) =>
+        React.createElement("div", { key: k, style: S.inputGroup },
+          React.createElement("label", { style: S.label }, label),
+          React.createElement("input", { style: S.input, value: form[k], onChange: set(k) })
+        )
+      ),
+      React.createElement("div", { style: S.inputGroup },
+        React.createElement("label", { style: S.label }, "Genre"),
+        React.createElement("select", { style: S.input, value: form.g, onChange: set('g') },
+          GENRE_KEYS.map(g => React.createElement("option", { key: g, value: g }, GENRES[g].label))
+        )
+      ),
+      React.createElement("div", { style: S.inputGroup },
+        React.createElement("label", { style: S.label }, "Ages"),
+        React.createElement("select", { style: S.input, value: form.age, onChange: set('age') },
+          React.createElement("option", { value: "" }, "—"),
+          React.createElement("option", { value: "all" }, "All ages"),
+          React.createElement("option", { value: "21+" }, "21+"),
+          React.createElement("option", { value: "18+" }, "18+")
+        )
+      ),
+      React.createElement("div", { style: S.inputGroup },
+        React.createElement("label", { style: S.label }, "Notes"),
+        React.createElement("textarea", { style: { ...S.input, height: '60px', resize: 'vertical' }, value: form.n, onChange: set('n') })
+      ),
+      React.createElement("button", { style: S.btnPrimary, onClick: handleSave }, "Save Event"),
+      React.createElement("button", { style: S.btnSecondary, onClick: onClose }, "Cancel")
+    )
+  );
 }
 
-// ── Install banner (iOS) ──────────────────────────────────────────
-function InstallBanner({
-  onDismiss
-}) {
+// ── Install Banner ────────────────────────────────────────────────
+function InstallBanner({ onDismiss }) {
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const isStandalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
   if (isStandalone || !isIOS) return null;
-  return /*#__PURE__*/React.createElement("div", {
-    style: S.installBanner
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: '16px'
-    }
-  }, "\u2B06"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      flex: 1
-    }
-  }, "Tap Share then \"Add to Home Screen\" to install"), /*#__PURE__*/React.createElement("button", {
-    style: {
-      color: 'var(--text3)',
-      fontSize: '14px'
-    },
-    onClick: onDismiss
-  }, "\xD7"));
+  return React.createElement("div", { style: S.installBanner },
+    React.createElement("span", { style: { fontSize: '16px' } }, "⬆"),
+    React.createElement("span", { style: { flex: 1 } }, 'Tap Share then "Add to Home Screen" to install'),
+    React.createElement("button", { style: { color: 'var(--text3)', fontSize: '14px' }, onClick: onDismiss }, "×")
+  );
 }
 
 // ── Main App ──────────────────────────────────────────────────────
@@ -1201,6 +829,9 @@ function App() {
   const [error, setError] = useState(null);
   const [cacheInfo, setCacheInfo] = useState(null);
   const [tags, setTags] = useState(() => lsGet(TAGS_KEY, {}));
+  const [tickets, setTickets] = useState(() => lsGet(TICKETS_KEY, {}));
+  const [hidden, setHidden] = useState(() => lsGet(HIDDEN_KEY, {}));
+  const [djOverrides, setDjOverrides] = useState(() => lsGet(DJ_OVERRIDE_KEY, {}));
   const [manual, setManual] = useState(() => lsGet(MANUAL_KEY, []));
   const [prefs, setPrefs] = useState(() => {
     const saved = lsGet(PREFS_KEY, {
@@ -1210,22 +841,32 @@ function App() {
       freeOnly: false,
       allAgesOnly: false,
       showSaved: false,
-      subgenres: []
+      subgenres: [],
+      showDJ: false,
+      liveOnly: false,
+      showHidden: false,
+      showTickets: false,
+      showStarredNoTicket: false,
     });
-    // Override view from URL param (e.g. ?view=today from home screen shortcut)
     const urlView = new URLSearchParams(window.location.search).get('view');
     if (urlView && ['today', 'week', 'month'].includes(urlView)) saved.view = urlView;
     return saved;
   });
-  const [detail, setDetail] = useState(null);
+  const [expandedDays, setExpandedDays] = useState(() => new Set([todayStr()]));
   const [showAdd, setShowAdd] = useState(false);
   const [showInstall, setShowInstall] = useState(true);
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [driveUser, setDriveUser] = useState(null); // { email } or null
+  const [driveUser, setDriveUser] = useState(null);
   const [driveSyncing, setDriveSyncing] = useState(false);
   const [driveSyncMsg, setDriveSyncMsg] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [artistPanel, setArtistPanel] = useState(null); // { name, event }
+  const [venuePanel, setVenuePanel] = useState(null);   // venueName string
+  const scrollRef = useRef(null);
+  const dayRefs = useRef({}); // { [dayKey]: domNode }
 
-  // Debounced tag writer — fires 600ms after last toggle to avoid hammering Drive
+  // Debounced tag write
   const _debouncedTagWrite = useRef(null);
   if (!_debouncedTagWrite.current) {
     _debouncedTagWrite.current = debounce(async (tagObj) => {
@@ -1235,93 +876,57 @@ function App() {
     }, 600);
   }
 
-  // ── Drive sync logic (shared between OAuth return and manual re-sync) ─
   const runDriveSync = useCallback(async (token) => {
     setDriveSyncing(true);
     setDriveSyncMsg('');
     try {
-      // Resolve user identity
-      const ui = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const ui = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${token}` } });
       const user = await ui.json();
       setDriveUser({ email: user.email });
-
-      // ── Sync prefs ──
       const drivePrefs = await driveRead(token, GOOG_PREFS_FILE);
-      if (drivePrefs) {
-        savePrefs({ ...prefs, ...drivePrefs });
-      } else {
-        await driveWrite(token, GOOG_PREFS_FILE, prefs);
-      }
-
-      // ── Sync tags ──
+      if (drivePrefs) { savePrefs({ ...prefs, ...drivePrefs }); }
+      else { await driveWrite(token, GOOG_PREFS_FILE, prefs); }
       const localTags = lsGet(TAGS_KEY, {});
       const driveTags = await driveRead(token, GOOG_TAGS_FILE);
       if (driveTags) {
         const merged = mergeTags(localTags, driveTags);
-        setTags(merged);
-        lsSet(TAGS_KEY, merged);
+        setTags(merged); lsSet(TAGS_KEY, merged);
         await driveWrite(token, GOOG_TAGS_FILE, merged);
-        const addedFromDrive = Object.keys(merged).length - Object.keys(localTags).length;
-        setDriveSyncMsg(
-          addedFromDrive > 0
-            ? `Synced — ${addedFromDrive} saved show${addedFromDrive > 1 ? 's' : ''} restored from Drive`
-            : 'Synced with Drive'
-        );
+        const added = Object.keys(merged).length - Object.keys(localTags).length;
+        setDriveSyncMsg(added > 0 ? `Synced — ${added} saved show${added > 1 ? 's' : ''} restored` : 'Synced with Drive');
       } else {
         await driveWrite(token, GOOG_TAGS_FILE, localTags);
-        setDriveSyncMsg(
-          `Signed in · ${Object.keys(localTags).length} saved show${Object.keys(localTags).length !== 1 ? 's' : ''} backed up`
-        );
+        setDriveSyncMsg(`Signed in · ${Object.keys(localTags).length} shows backed up`);
       }
-    } catch (e) {
-      setDriveSyncMsg('Sync error: ' + e.message);
-    } finally {
-      setDriveSyncing(false);
-      setTimeout(() => setDriveSyncMsg(''), 6000);
-    }
+    } catch (e) { setDriveSyncMsg('Sync error: ' + e.message); }
+    finally { setDriveSyncing(false); setTimeout(() => setDriveSyncMsg(''), 6000); }
   }, [prefs]);
 
-  // ── On mount: restore session if valid stored token exists ─────
   useEffect(() => {
     const stored = getStoredToken();
     if (stored) {
-      fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: `Bearer ${stored.access_token}` }
-      }).then(r => r.json()).then(u => {
-        if (u.email) setDriveUser({ email: u.email });
-      }).catch(() => {});
+      fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${stored.access_token}` } })
+        .then(r => r.json()).then(u => { if (u.email) setDriveUser({ email: u.email }); }).catch(() => {});
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ── Sign-in button: open auth.html in new Safari tab ─────────
   const signInWithGoogle = useCallback(async () => {
-    if (!GOOG_CLIENT_ID) {
-      setDriveSyncMsg('Drive sync not configured');
-      return;
-    }
+    if (!GOOG_CLIENT_ID) { setDriveSyncMsg('Drive sync not configured'); return; }
     setDriveSyncing(true);
     setDriveSyncMsg('Opening Google sign-in tab…');
     try {
       const token = await openAuthTab();
       await runDriveSync(token);
     } catch (e) {
-      if (e.message === 'popup_blocked') {
-        setDriveSyncMsg('Tab blocked — allow pop-ups for this site in Safari settings');
-      } else {
-        setDriveSyncMsg('Sign-in failed: ' + e.message);
-      }
+      setDriveSyncMsg(e.message === 'popup_blocked' ? 'Tab blocked — allow pop-ups in Safari settings' : 'Sign-in failed: ' + e.message);
       setDriveSyncing(false);
       setTimeout(() => setDriveSyncMsg(''), 7000);
     }
   }, [runDriveSync]);
 
-  // ── Re-sync button (when already signed in) ───────────────────
   const reSyncDrive = useCallback(async () => {
     const tok = getStoredToken();
     if (tok) { runDriveSync(tok.access_token); return; }
-    // Token expired — re-auth via tab
     signInWithGoogle();
   }, [runDriveSync, signInWithGoogle]);
 
@@ -1330,35 +935,18 @@ function App() {
     if (!tok) return;
     try { await driveWrite(tok.access_token, GOOG_PREFS_FILE, newPrefs); } catch {}
   }, []);
-  const [expandedDays, setExpandedDays] = useState(() => new Set([todayStr()]));
 
-  // Snapshot for NEW badges — taken when events first load
   const snapRef = useRef(false);
-  const saveTags = t => {
-    setTags(t);
-    lsSet(TAGS_KEY, t);
-    // Debounced write to Drive (no-op if not signed in — checked inside)
-    _debouncedTagWrite.current(t);
-  };
-  const savePrefs = p => {
-    setPrefs(p);
-    lsSet(PREFS_KEY, p);
-    syncPrefsToDrive(p);
-  };
-  const saveManual = m => {
-    setManual(m);
-    lsSet(MANUAL_KEY, m);
-  };
+
+  const saveTags = t => { setTags(t); lsSet(TAGS_KEY, t); _debouncedTagWrite.current(t); };
+  const savePrefs = p => { setPrefs(p); lsSet(PREFS_KEY, p); syncPrefsToDrive(p); };
+  const saveManual = m => { setManual(m); lsSet(MANUAL_KEY, m); };
+
   const load = useCallback(async (force = false) => {
-    if (force) {
-      // Clear cache
-      lsSet(CACHE_KEY, null);
-      setRefreshing(true);
-    }
+    if (force) { lsSet(CACHE_KEY, null); setRefreshing(true); }
     setError(null);
     try {
       const { events: fetched, meta, fromCache, ts } = await fetchEvents();
-      // Take snapshot of IDs if not yet done this session
       if (!snapRef.current) {
         const snap = lsGet(SNAP_KEY, null);
         if (!snap) {
@@ -1369,414 +957,352 @@ function App() {
         snapRef.current = true;
       }
       setEvents(fetched);
-      // Auto-expand today + tomorrow on first load
       const t = todayStr();
+      setExpandedDays(new Set([t])); // will add more below
       const tmrw = new Date(); tmrw.setDate(tmrw.getDate() + 1);
       const tmrwStr = `${tmrw.getFullYear()}-${pad(tmrw.getMonth()+1)}-${pad(tmrw.getDate())}`;
-      setExpandedDays(prev => { const s = new Set(prev); s.add(t); s.add(tmrwStr); return s; });
+      setExpandedDays(new Set([t, tmrwStr]));
       setCacheInfo({ fromCache, ts, meta });
     } catch (err) {
       setError(err.message);
-      // Try to use whatever's in cache even if stale
       const stale = lsGet(CACHE_KEY);
-      if (stale && stale.events) {
-        setEvents(stale.events);
-        setCacheInfo({
-          fromCache: true,
-          ts: stale.ts,
-          stale: true
-        });
-      }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-  useEffect(() => {
-    load();
+      if (stale && stale.events) { setEvents(stale.events); setCacheInfo({ fromCache: true, ts: stale.ts, stale: true }); }
+    } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
-  // Register service worker
+  useEffect(() => { load(); }, []);
+
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/bay-shows/sw.js').catch(console.warn);
     }
   }, []);
 
-  // All events (fetched + manual)
+  // Attach DJ classification to events
   const allEvents = useMemo(() => {
-    const manualWithFlag = manual.map(e => ({
+    const manualWithFlag = manual.map(e => ({ ...e, _manual: true }));
+    return [...manualWithFlag, ...events].map(e => ({
       ...e,
-      _manual: true
+      _isDJ: classifyDJ(e, djOverrides)
     }));
-    return [...manualWithFlag, ...events];
-  }, [events, manual]);
+  }, [events, manual, djOverrides]);
 
-  // Filtered & sorted events
+  // Filtered events (respects all prefs + search)
   const filtered = useMemo(() => {
     const today = todayStr();
+    const q = searchQuery.trim().toLowerCase();
     return allEvents.filter(e => {
       if (!e.d || e.d < today) return false;
+
+      // Remove expired events
+      if (hasEnded(e)) return false;
+
+      // Hidden filter
+      if (!prefs.showHidden && hidden[e.id]) return false;
+
+      // DJ filter (default hidden)
+      if (e._isDJ) {
+        if (prefs.liveOnly) return false;
+        if (!prefs.showDJ) return false;
+      }
+
       if (prefs.freeOnly && !(e.p === '0' || e.p === 0 || e.pr === 'free')) return false;
       if (prefs.allAgesOnly && !(e.age === 'all' || e.age === 'all-ages')) return false;
       if (prefs.showSaved && !tags[e.id]) return false;
+      if (prefs.showTickets && !tickets[e.id]) return false;
+      if (prefs.showStarredNoTicket && !(tags[e.id] && !tickets[e.id])) return false;
       if (prefs.regions && prefs.regions.length > 0 && !prefs.regions.includes(e.r)) return false;
       if (prefs.genres && prefs.genres.length > 0 && !prefs.genres.includes(resolveGenre(e.g))) return false;
-      if (prefs.subgenres && prefs.subgenres.length > 0) { const evSgs = Array.isArray(e.sg) ? e.sg : [e.sg || '']; if (!prefs.subgenres.some(sg => evSgs.some(s => s === sg || s.toLowerCase() === sg.toLowerCase()))) return false; }
-      // View windowing
-      if (prefs.view === 'today') {
-        return e.d === today;
-      } else if (prefs.view === 'week') {
-        const limit = new Date();
-        limit.setDate(limit.getDate() + 7);
+      if (prefs.subgenres && prefs.subgenres.length > 0) {
+        const evSgs = Array.isArray(e.sg) ? e.sg : [e.sg || ''];
+        if (!prefs.subgenres.some(sg => evSgs.some(s => s === sg || s.toLowerCase() === sg.toLowerCase()))) return false;
+      }
+      // Search
+      if (q) {
+        const haystack = [fmtA(e.a), e.v, fmtSg(e.sg), e.n].filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      // View window
+      if (prefs.view === 'today') return e.d === today;
+      if (prefs.view === 'week') {
+        const limit = new Date(); limit.setDate(limit.getDate() + 7);
         const [y, m, d] = e.d.split('-').map(Number);
         return new Date(y, m - 1, d) <= limit;
       }
-      // 'month' — show all upcoming
       return true;
     }).sort((a, b) => {
       if (a.d !== b.d) return a.d < b.d ? -1 : 1;
-      const ta = a.t || '23:59',
-        tb = b.t || '23:59';
-      return ta < tb ? -1 : ta > tb ? 1 : 0;
+      return midpointMins(a) - midpointMins(b);
     });
-  }, [allEvents, prefs, tags]);
+  }, [allEvents, prefs, tags, tickets, hidden, searchQuery]);
 
-  // Group by day, then by time bucket within each day
+  // Group by day → time bucket
   const grouped = useMemo(() => {
     const map = {};
     filtered.forEach(e => {
       if (!map[e.d]) map[e.d] = {};
-      const tb = timeBucket(e.t);
+      const tb = timeBucket(e);
       if (!map[e.d][tb]) map[e.d][tb] = [];
       map[e.d][tb].push(e);
     });
     return map;
   }, [filtered]);
+
   const dayKeys = Object.keys(grouped).sort();
   const today = todayStr();
-  const toggleTag = id => {
-    const next = {
-      ...tags
-    };
-    if (next[id]) delete next[id];else next[id] = Date.now();
-    saveTags(next);
+
+  // Expand ALL days initially (and on full expand)
+  const expandAll = () => setExpandedDays(new Set(dayKeys));
+  const collapseAll = () => setExpandedDays(new Set());
+
+  const toggleDay = (day) => {
+    const next = new Set(expandedDays);
+    next.has(day) ? next.delete(day) : next.add(day);
+    setExpandedDays(next);
   };
+
+  // Jump to a day key by scrolling its ref into view
+  const jumpTo = (dayKey) => {
+    if (!dayKey) return;
+    // Expand that day first
+    setExpandedDays(prev => { const s = new Set(prev); s.add(dayKey); return s; });
+    setTimeout(() => {
+      const el = dayRefs.current[dayKey];
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  };
+
+  const toggleTag = id => { const next = { ...tags }; if (next[id]) delete next[id]; else next[id] = Date.now(); saveTags(next); };
+  const toggleTicket = id => { const next = { ...tickets }; if (next[id]) delete next[id]; else next[id] = Date.now(); setTickets(next); lsSet(TICKETS_KEY, next); };
+  const hideEvent = id => { const next = { ...hidden, [id]: Date.now() }; setHidden(next); lsSet(HIDDEN_KEY, next); };
+  const toggleDJ = (id, val) => { const next = { ...djOverrides, [id]: val }; setDjOverrides(next); lsSet(DJ_OVERRIDE_KEY, next); };
+
   const toggleGenre = g => {
     const genres = prefs.genres || [];
     const wasActive = genres.includes(g);
     const next = wasActive ? genres.filter(x => x !== g) : [...genres, g];
-    savePrefs({
-      ...prefs,
-      genres: next,
-      // Clear subgenres when deactivating the genre, or when switching to a different genre
-      subgenres: wasActive ? [] : (next.length === 1 ? (prefs.subgenres || []) : [])
-    });
-  };
-  const handleAction = (type, event) => {
-    if (type === 'detail') setDetail(event);
-  };
-  const handleAddManual = event => {
-    const next = [event, ...manual];
-    saveManual(next);
-  };
-  const deleteManual = id => {
-    const next = manual.filter(e => e.id !== id);
-    saveManual(next);
-    setDetail(null);
+    savePrefs({ ...prefs, genres: next, subgenres: wasActive ? [] : (next.length === 1 ? (prefs.subgenres || []) : []) });
   };
 
-  // ── Render ────────────────────────────────────────────────────
-  return /*#__PURE__*/React.createElement("div", {
-    style: S.app
-  }, /*#__PURE__*/React.createElement("style", null, ANIM_STYLE), /*#__PURE__*/React.createElement("div", {
-    style: S.header
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.headerRow
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.logo
-  }, "\u266A"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.title
-  }, "BAY SHOWS"), /*#__PURE__*/React.createElement("div", {
-    style: S.subtitle
-  }, loading ? 'loading…' : cacheInfo ? (() => {
-      const total = cacheInfo.meta ? cacheInfo.meta.event_count : null;
-      const builtAt = cacheInfo.meta && cacheInfo.meta.built_at
-        ? new Date(cacheInfo.meta.built_at).toLocaleDateString([], {month:'short',day:'numeric'})
-        : null;
-      return `${filtered.length}${total ? '/'+total : ''} shows · ${cacheInfo.fromCache ? 'cached' : 'live'}${cacheInfo.stale ? ' (stale)' : ''}${builtAt ? ' · updated '+builtAt : ''}`;
-    })() : `${filtered.length} shows`)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '6px',
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.actionBtn,
-      color: prefs.showSaved ? 'var(--accent)' : 'var(--text3)'
-    },
-    onClick: () => savePrefs({
-      ...prefs,
-      showSaved: !prefs.showSaved
-    })
-  }, "\u2605"), /*#__PURE__*/React.createElement("button", {
-    style: S.actionBtn,
-    onClick: () => setShowAdd(true)
-  }, "+"), /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.refreshBtn,
-      opacity: refreshing ? 0.5 : 1
-    },
-    onClick: () => load(true),
-    disabled: refreshing
-  }, refreshing ? '↻…' : '↻'), driveUser
-    ? /*#__PURE__*/React.createElement("button", {
-        title: `Syncing to Drive as ${driveUser.email} — tap to refresh sync`,
-        style: { ...S.actionBtn, color: 'var(--accent)', fontSize: '11px' },
-        onClick: reSyncDrive
-      }, driveSyncing ? '…' : '☁')
-    : GOOG_CLIENT_ID && /*#__PURE__*/React.createElement("button", {
-        title: 'Sign in with Google (opens new tab) to sync saved shows + prefs',
-        style: { ...S.actionBtn, color: 'var(--text3)', fontSize: '11px' },
-        onClick: signInWithGoogle
-      }, driveSyncing ? '…' : '☁̲')
-  )), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '8px',
-      marginTop: '8px',
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.sectionToggle
-  }, [['today', 'Today'], ['week', 'Week'], ['month', 'All']].map(([v, l]) => /*#__PURE__*/React.createElement("button", {
-    key: v,
-    style: S.sectionBtn(prefs.view === v),
-    onClick: () => savePrefs({
-      ...prefs,
-      view: v
-    })
-  }, l))), /*#__PURE__*/React.createElement("button", {
-    style: S.filterChip(prefs.freeOnly),
-    onClick: () => savePrefs({
-      ...prefs,
-      freeOnly: !prefs.freeOnly
-    })
-  }, "FREE"), /*#__PURE__*/React.createElement("button", {
-    style: S.filterChip(prefs.allAgesOnly),
-    onClick: () => savePrefs({
-      ...prefs,
-      allAgesOnly: !prefs.allAgesOnly
-    })
-  }, "ALL AGES"))), /*#__PURE__*/React.createElement("div", {
-    style: S.filters,
-    className: "filter-scroll"
-  }, GENRE_KEYS.map(g => {
-    const active = (prefs.genres || []).includes(g);
-    return /*#__PURE__*/React.createElement("button", {
-      key: g,
-      style: S.genreChip(GENRES[g].color, active),
-      onClick: () => toggleGenre(g)
-    }, GENRES[g].label);
-  })),
-  // ── Subgenre chips — visible only when exactly one genre is active ──
-  (prefs.genres || []).length === 1 && SUBGENRES_BY_TOP[(prefs.genres)[0]] && SUBGENRES_BY_TOP[(prefs.genres)[0]].length > 1 &&
-  /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.filters,
-      paddingTop: '3px',
-      paddingBottom: '3px',
-      background: 'var(--bg2)',
-      borderTop: '1px solid var(--border2)'
-    },
-    className: "filter-scroll"
-  }, SUBGENRES_BY_TOP[(prefs.genres)[0]].map(sg => {
-    const sgActive = (prefs.subgenres || []).includes(sg);
-    const color = GENRES[(prefs.genres)[0]].color;
-    return /*#__PURE__*/React.createElement("button", {
-      key: sg,
-      style: {
-        ...S.filterChip(sgActive),
-        fontSize: '9px',
-        border: sgActive ? `1px solid ${color}` : '1px solid var(--border2)',
-        color: sgActive ? color : 'var(--text2)',
-        background: sgActive ? color + '22' : 'transparent',
-        padding: '2px 7px',
-      },
-      onClick: () => {
-        const subs = prefs.subgenres || [];
-        savePrefs({
-          ...prefs,
-          subgenres: sgActive ? subs.filter(s => s !== sg) : [...subs, sg]
-        });
-      }
-    }, sg);
-  })),
-  /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.filters,
-      paddingTop: '4px',
-      paddingBottom: '6px',
-      borderBottom: '1px solid var(--border2)'
-    },
-    className: "filter-scroll"
-  }, Object.entries(REGIONS).map(([k, v]) => {
-    const active = (prefs.regions || []).includes(k);
-    return /*#__PURE__*/React.createElement("button", {
-      key: k,
-      style: S.filterChip(active),
-      onClick: () => {
-        const regions = prefs.regions || [];
-        savePrefs({
-          ...prefs,
-          regions: active ? regions.filter(r => r !== k) : [...regions, k]
-        });
-      }
-    }, v);
-  })), showInstall && /*#__PURE__*/React.createElement(InstallBanner, {
-    onDismiss: () => setShowInstall(false)
-  }), /*#__PURE__*/React.createElement("div", {
-    style: S.scroll
-  }, loading && /*#__PURE__*/React.createElement("div", {
-    style: S.loadingWrap
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '6px',
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.loadingDot,
-      animationDelay: '0ms'
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.loadingDot,
-      animationDelay: '200ms'
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.loadingDot,
-      animationDelay: '400ms'
-    }
-  })), /*#__PURE__*/React.createElement("div", null, "fetching bay area shows\u2026")), !loading && error && events.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: S.emptyState
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: 'var(--red)',
-      marginBottom: '8px'
-    }
-  }, "\u26A0 ", error), /*#__PURE__*/React.createElement("div", null, "Could not load events."), /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.actionBtn,
-      marginTop: '12px'
-    },
-    onClick: () => load(true)
-  }, "Retry")), !loading && dayKeys.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: S.emptyState
-  }, /*#__PURE__*/React.createElement("div", null, "No shows match your filters."), /*#__PURE__*/React.createElement("button", {
-    style: {
-      ...S.actionBtn,
-      marginTop: '12px',
-      color: 'var(--accent)'
-    },
-    onClick: () => savePrefs({
-      ...prefs,
-      genres: [],
-      regions: [],
-      freeOnly: false,
-      allAgesOnly: false,
-      showSaved: false
-    })
-  }, "Clear filters")), dayKeys.map(day => {
-    const isToday = day === today;
-    const timeBuckets = grouped[day];
-    const TB_ORDER = ['afternoon-early', 'afternoon', 'evening', 'night'];
-    const count = Object.values(timeBuckets).flat().length;
-    const isExpanded = expandedDays.has(day);
-    const toggleDay = () => {
-      const next = new Set(expandedDays);
-      next.has(day) ? next.delete(day) : next.add(day);
-      setExpandedDays(next);
-    };
-    return /*#__PURE__*/React.createElement("div", {
-      key: day,
-      style: S.dayGroup
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        ...S.dayHeader,
-        color: isToday ? 'var(--accent)' : 'var(--text3)',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        userSelect: 'none',
-      },
-      onClick: toggleDay
-    },
-      /*#__PURE__*/React.createElement("span", null,
-        isToday ? '▶ TODAY — ' : '', dateLabel(day),
-        /*#__PURE__*/React.createElement("span", {
-          style: { fontWeight: 300, marginLeft: '6px', color: 'var(--text3)' }
-        }, count, " shows")
+  // Count active secondary filters for badge
+  const activeSecondaryCount = [prefs.freeOnly, prefs.allAgesOnly, prefs.showSaved, prefs.showTickets,
+    prefs.showStarredNoTicket, prefs.showHidden, prefs.showDJ, prefs.liveOnly].filter(Boolean).length;
+
+  return React.createElement("div", { style: S.app },
+    React.createElement("style", null, ANIM_STYLE),
+
+    // ── Header ──
+    React.createElement("div", { style: S.header },
+      React.createElement("div", { style: S.headerRow },
+        React.createElement("div", { style: S.logo }, "♪"),
+        React.createElement("div", { style: { flex: 1 } },
+          React.createElement("div", { style: S.title }, "BAY SHOWS"),
+          React.createElement("div", { style: S.subtitle },
+            loading ? 'loading…' : cacheInfo ? (() => {
+              const total = cacheInfo.meta ? cacheInfo.meta.event_count : null;
+              const builtAt = cacheInfo.meta && cacheInfo.meta.built_at
+                ? new Date(cacheInfo.meta.built_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : null;
+              return `${filtered.length}${total ? '/'+total : ''} shows · ${cacheInfo.fromCache ? 'cached' : 'live'}${cacheInfo.stale ? ' (stale)' : ''}${builtAt ? ' · updated '+builtAt : ''}`;
+            })() : `${filtered.length} shows`
+          )
+        ),
+        React.createElement("div", { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+          React.createElement("button", { style: { ...S.actionBtn, color: prefs.showSaved ? 'var(--accent)' : 'var(--text3)' }, onClick: () => savePrefs({ ...prefs, showSaved: !prefs.showSaved }) }, "★"),
+          React.createElement("button", { style: S.actionBtn, onClick: () => setShowAdd(true) }, "+"),
+          React.createElement("button", { style: { ...S.refreshBtn, opacity: refreshing ? 0.5 : 1 }, onClick: () => load(true), disabled: refreshing }, refreshing ? '↻…' : '↻'),
+          driveUser
+            ? React.createElement("button", { title: `Synced as ${driveUser.email}`, style: { ...S.actionBtn, color: 'var(--accent)' }, onClick: reSyncDrive }, driveSyncing ? '…' : '☁')
+            : GOOG_CLIENT_ID && React.createElement("button", { title: 'Sign in with Google', style: { ...S.actionBtn, color: 'var(--text3)' }, onClick: signInWithGoogle }, driveSyncing ? '…' : '☁̲')
+        )
       ),
-      /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: '10px', color: 'var(--text3)', marginRight: '4px' }
-      }, isExpanded ? '▾' : '▸')
+      // View toggle + expand/collapse controls
+      React.createElement("div", { style: { display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' } },
+        React.createElement("div", { style: S.sectionToggle },
+          [['today', 'Today'], ['week', 'Week'], ['month', 'All']].map(([v, l]) =>
+            React.createElement("button", { key: v, style: S.sectionBtn(prefs.view === v), onClick: () => savePrefs({ ...prefs, view: v }) }, l)
+          )
+        ),
+        React.createElement("button", { style: { ...S.actionBtn, fontSize: '9px' }, onClick: expandAll }, "expand all"),
+        React.createElement("button", { style: { ...S.actionBtn, fontSize: '9px' }, onClick: collapseAll }, "collapse all"),
+        // More filters button with badge
+        React.createElement("button", {
+          style: { ...S.filterChip(showMoreFilters || activeSecondaryCount > 0), marginLeft: 'auto' },
+          onClick: () => setShowMoreFilters(v => !v)
+        }, `Filters${activeSecondaryCount > 0 ? ` (${activeSecondaryCount})` : ''} ${showMoreFilters ? '▴' : '▾'}`)
+      )
     ),
-    isExpanded && TB_ORDER.filter(tb => timeBuckets[tb] && timeBuckets[tb].length > 0).map(tb => /*#__PURE__*/React.createElement("div", {
-      key: tb
-    }, /*#__PURE__*/React.createElement("div", {
-      style: S.timeDivider
-    }, timeBucketLabel[tb]), timeBuckets[tb].map((event, i) => /*#__PURE__*/React.createElement(EventCard, {
-      key: event.id,
-      event: event,
-      rank: i < 3 ? i : 3,
-      tags: tags,
-      onToggleTag: toggleTag,
-      onAction: handleAction
-    })))));
-  })), /*#__PURE__*/React.createElement("div", {
-    style: S.statusBar
-  }, cacheInfo && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, cacheInfo.fromCache ? '◌ cached' : '● live'), cacheInfo.ts && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--text3)'
-    }
-  }, "\xB7 ", new Date(cacheInfo.ts).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit'
-  }))), error && /*#__PURE__*/React.createElement("span", {
-    style: { color: 'var(--red)' }
-  }, "\u26A0 ", error),
-  driveUser && !driveSyncMsg && /*#__PURE__*/React.createElement("span", {
-    style: { color: 'var(--text3)', fontSize: '10px' }
-  }, '☁ ', driveUser.email.split('@')[0]),
-  driveSyncMsg && /*#__PURE__*/React.createElement("span", {
-    style: { color: 'var(--accent)', fontSize: '10px' }
-  }, driveSyncMsg),
-  /*#__PURE__*/React.createElement("span", {
-    style: { marginLeft: 'auto', color: 'var(--text3)' }
-  }, Object.keys(tags).length, " saved")), detail && /*#__PURE__*/React.createElement(DetailModal, {
-    event: detail,
-    tags: tags,
-    onToggleTag: toggleTag,
-    onClose: () => setDetail(null),
-    onDelete: detail._manual ? () => deleteManual(detail.id) : null
-  }), showAdd && /*#__PURE__*/React.createElement(AddModal, {
-    onSave: handleAddManual,
-    onClose: () => setShowAdd(false)
-  }));
+
+    // ── Search bar ──
+    React.createElement("div", { style: S.searchBar },
+      React.createElement("input", {
+        style: S.searchInput,
+        type: 'text',
+        placeholder: '🔍 Search artists, venues, tags…',
+        value: searchQuery,
+        onChange: e => setSearchQuery(e.target.value)
+      })
+    ),
+
+    // ── More Filters Panel ──
+    showMoreFilters && React.createElement(MoreFiltersPanel, {
+      prefs,
+      savePrefs,
+      onClose: () => setShowMoreFilters(false)
+    }),
+
+    // ── Genre chips ──
+    React.createElement("div", { style: S.filters, className: "filter-scroll" },
+      GENRE_KEYS.map(g => {
+        const active = (prefs.genres || []).includes(g);
+        return React.createElement("button", { key: g, style: S.genreChip(GENRES[g].color, active), onClick: () => toggleGenre(g) }, GENRES[g].label);
+      })
+    ),
+
+    // ── Subgenre chips ──
+    (prefs.genres || []).length === 1 && SUBGENRES_BY_TOP[(prefs.genres)[0]] && SUBGENRES_BY_TOP[(prefs.genres)[0]].length > 1 &&
+    React.createElement("div", {
+      style: { ...S.filters, paddingTop: '3px', paddingBottom: '3px', background: 'var(--bg2)', borderTop: '1px solid var(--border2)' },
+      className: "filter-scroll"
+    }, SUBGENRES_BY_TOP[(prefs.genres)[0]].map(sg => {
+      const sgActive = (prefs.subgenres || []).includes(sg);
+      const color = GENRES[(prefs.genres)[0]].color;
+      return React.createElement("button", {
+        key: sg,
+        style: { ...S.filterChip(sgActive), fontSize: '9px', border: sgActive ? `1px solid ${color}` : '1px solid var(--border2)', color: sgActive ? color : 'var(--text2)', background: sgActive ? color + '22' : 'transparent', padding: '2px 7px' },
+        onClick: () => { const subs = prefs.subgenres || []; savePrefs({ ...prefs, subgenres: sgActive ? subs.filter(s => s !== sg) : [...subs, sg] }); }
+      }, sg);
+    })),
+
+    // ── Region chips ──
+    React.createElement("div", {
+      style: { ...S.filters, paddingTop: '4px', paddingBottom: '6px', borderBottom: '1px solid var(--border2)' },
+      className: "filter-scroll"
+    }, Object.entries(REGIONS).map(([k, v]) => {
+      const active = (prefs.regions || []).includes(k);
+      return React.createElement("button", {
+        key: k,
+        style: S.filterChip(active),
+        onClick: () => { const regions = prefs.regions || []; savePrefs({ ...prefs, regions: active ? regions.filter(r => r !== k) : [...regions, k] }); }
+      }, v);
+    })),
+
+    showInstall && React.createElement(InstallBanner, { onDismiss: () => setShowInstall(false) }),
+
+    // ── Main scroll area ──
+    React.createElement("div", { style: S.scroll, ref: scrollRef },
+      loading && React.createElement("div", { style: S.loadingWrap },
+        React.createElement("div", { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+          [0, 200, 400].map(delay => React.createElement("div", { key: delay, style: { ...S.loadingDot, animationDelay: `${delay}ms` } }))
+        ),
+        React.createElement("div", null, "fetching bay area shows…")
+      ),
+      !loading && error && events.length === 0 && React.createElement("div", { style: S.emptyState },
+        React.createElement("div", { style: { color: 'var(--red)', marginBottom: '8px' } }, "⚠ ", error),
+        React.createElement("div", null, "Could not load events."),
+        React.createElement("button", { style: { ...S.actionBtn, marginTop: '12px' }, onClick: () => load(true) }, "Retry")
+      ),
+      !loading && dayKeys.length === 0 && React.createElement("div", { style: S.emptyState },
+        React.createElement("div", null, "No shows match your filters."),
+        React.createElement("button", {
+          style: { ...S.actionBtn, marginTop: '12px', color: 'var(--accent)' },
+          onClick: () => { savePrefs({ ...prefs, genres: [], regions: [], freeOnly: false, allAgesOnly: false, showSaved: false }); setSearchQuery(''); }
+        }, "Clear filters")
+      ),
+
+      dayKeys.map(day => {
+        const isToday = day === today;
+        const timeBuckets = grouped[day];
+        const count = Object.values(timeBuckets).flat().length;
+        const isExpanded = expandedDays.has(day);
+
+        return React.createElement("div", {
+          key: day,
+          style: S.dayGroup,
+          ref: el => { if (el) dayRefs.current[day] = el; }
+        },
+          // Day header
+          React.createElement("div", {
+            style: { ...S.dayHeader, color: isToday ? 'var(--accent)' : 'var(--text3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none' },
+            onClick: () => toggleDay(day)
+          },
+            React.createElement("span", null,
+              isToday ? '▶ TODAY — ' : '', dateLabel(day),
+              React.createElement("span", { style: { fontWeight: 300, marginLeft: '6px', color: 'var(--text3)' } }, count, " shows")
+            ),
+            React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '10px' }, onClick: e => e.stopPropagation() },
+              // Jump links
+              React.createElement("span", {
+                style: S.jumpLink,
+                onClick: (e) => { e.stopPropagation(); jumpTo(nextDayKey(day, dayKeys)); }
+              }, "next day ↓"),
+              React.createElement("span", {
+                style: S.jumpLink,
+                onClick: (e) => { e.stopPropagation(); jumpTo(nextWeekKey(day, dayKeys)); }
+              }, "next week ↓"),
+              React.createElement("span", {
+                style: S.jumpLink,
+                onClick: (e) => { e.stopPropagation(); jumpTo(nextMonthKey(day, dayKeys)); }
+              }, "next month ↓"),
+              React.createElement("span", { style: { fontSize: '10px', color: 'var(--text3)' } }, isExpanded ? '▾' : '▸')
+            )
+          ),
+
+          // Events (expanded)
+          isExpanded && TB_ORDER.filter(tb => timeBuckets[tb] && timeBuckets[tb].length > 0).map(tb =>
+            React.createElement("div", { key: tb },
+              React.createElement("div", { style: S.timeDivider }, timeBucketLabel[tb]),
+              timeBuckets[tb].map((event, i) =>
+                React.createElement(EventCard, {
+                  key: event.id,
+                  event: event,
+                  rank: i < 3 ? i : 3,
+                  tags, tickets, hidden, djOverrides,
+                  onToggleTag: toggleTag,
+                  onToggleTicket: toggleTicket,
+                  onHide: hideEvent,
+                  onToggleDJ: toggleDJ,
+                  onArtistClick: (name) => setArtistPanel({ name }),
+                  onVenueClick: (name) => setVenuePanel(name)
+                })
+              )
+            )
+          )
+        );
+      })
+    ),
+
+    // ── Status bar ──
+    React.createElement("div", { style: S.statusBar },
+      cacheInfo && React.createElement(React.Fragment, null,
+        React.createElement("span", null, cacheInfo.fromCache ? '◌ cached' : '● live'),
+        cacheInfo.ts && React.createElement("span", { style: { color: 'var(--text3)' } }, '· ', new Date(cacheInfo.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+      ),
+      error && React.createElement("span", { style: { color: 'var(--red)' } }, "⚠ ", error),
+      driveUser && !driveSyncMsg && React.createElement("span", { style: { color: 'var(--text3)', fontSize: '10px' } }, '☁ ', driveUser.email.split('@')[0]),
+      driveSyncMsg && React.createElement("span", { style: { color: 'var(--accent)', fontSize: '10px' } }, driveSyncMsg),
+      React.createElement("span", { style: { marginLeft: 'auto', color: 'var(--text3)' } }, Object.keys(tags).length, " saved",
+        Object.keys(tickets).length > 0 ? ` · ${Object.keys(tickets).length} 🎫` : ''
+      )
+    ),
+
+    // ── Modals ──
+    artistPanel && React.createElement(ArtistPanel, {
+      artistName: artistPanel.name,
+      events: allEvents,
+      onClose: () => setArtistPanel(null)
+    }),
+    venuePanel && React.createElement(VenuePanel, {
+      venueName: venuePanel,
+      events: allEvents,
+      onClose: () => setVenuePanel(null)
+    }),
+    showAdd && React.createElement(AddModal, { onSave: e => { saveManual([e, ...manual]); }, onClose: () => setShowAdd(false) }),
+  );
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(/*#__PURE__*/React.createElement(App, null));
+root.render(React.createElement(App, null));
   </script>
 </body>
 </html>
