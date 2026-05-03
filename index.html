@@ -262,14 +262,12 @@ const fmtSg = (sg) => {
 };
 
 // ── DJ classification ────────────────────────────────────────────
-// Priority: manual override > has _mbLinks (known recording artist) > source default
+// All 19hz events are treated as DJ/club by default.
+// Manual override (per-event 'mark live' / 'mark DJ') always wins.
 function classifyDJ(event, djOverrides) {
   const override = djOverrides && djOverrides[event.id];
   if (override === 'live') return false;
   if (override === 'dj') return true;
-  // Has MB/Last.fm data → treat as live artist regardless of source
-  if (event._mbLinks && Object.keys(event._mbLinks).length > 0) return false;
-  // Source default
   return event.so === '19hz';
 }
 
