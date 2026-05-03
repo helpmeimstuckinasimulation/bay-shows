@@ -268,7 +268,7 @@ function classifyDJ(event, djOverrides) {
   const override = djOverrides && djOverrides[event.id];
   if (override === 'live') return false;
   if (override === 'dj') return true;
-  return event.so === '19hz';
+  return event.s === '19hz';
 }
 
 // ── Time / end-time inference ─────────────────────────────────────
@@ -598,8 +598,8 @@ function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTa
         return React.createElement("span", { key: gi, style: S.tag(gResolved.color) }, gResolved.label);
       }),
       event.sg && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, fmtSg(event.sg)),
-      event.so === 'riotlist' && React.createElement("span", { style: { ...S.tag('#555568'), fontSize: '9px' } }, "riotlist"),
-      event.so === '19hz' && React.createElement("span", { style: { ...S.tag('#555568'), fontSize: '9px' } }, "19hz")
+      event.s === 'riotlist' && React.createElement("span", { style: { ...S.tag('#555568'), fontSize: '9px' } }, "riotlist"),
+      event.s === '19hz' && React.createElement("span", { style: { ...S.tag('#555568'), fontSize: '9px' } }, "19hz")
     ),
     event.n && React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', marginTop: '2px', lineHeight: 1.4 } }, event.n),
     // Action row
@@ -615,7 +615,7 @@ function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTa
         title: 'Mark as live event',
         onClick: () => onToggleDJ(event.id, 'live')
       }, "mark live"),
-      !isDJ && event.so === '19hz' && React.createElement("button", {
+      !isDJ && event.s === '19hz' && React.createElement("button", {
         style: { ...S.actionBtn, fontSize: '9px', color: 'var(--text3)' },
         title: 'Mark as DJ/club event',
         onClick: () => onToggleDJ(event.id, 'dj')
