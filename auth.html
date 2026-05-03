@@ -48,6 +48,13 @@
   <script src="https://accounts.google.com/gsi/client" onload="onGISLoad()" onerror="showError('Failed to load Google auth library. Check your connection.')"></script>
 
   <script>
+    // Timeout if GIS script never calls onGISLoad
+    setTimeout(() => {
+      if (!window._gisLoaded) showError('Google auth library timed out. Check your connection and try again.');
+    }, 10000);
+  </script>
+
+  <script>
     // ── Config — must match index.html ─────────────────────────
     const GOOG_CLIENT_ID  = '1030489561991-kbu11qmn3o58ahu69d27f3g09qhai1ns.apps.googleusercontent.com';
     const GOOG_SCOPE      = 'https://www.googleapis.com/auth/drive.file';
@@ -66,6 +73,7 @@
       document.getElementById('retryBtn').style.display = 'inline-block';
     }
 
+    window._gisLoaded = true;
     function onGISLoad() {
       setStatus('Google loaded — requesting access…');
       // Small delay to ensure GIS is fully ready
