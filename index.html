@@ -216,151 +216,40 @@ const fmtA = (a) => {
 };
 
 // ── Genre taxonomy (15 buckets) ───────────────────────────────────
+// ── Genre taxonomy — matches bay_shows_taxonomy_json v2 exactly ──
+// Keys ARE the top-level genre strings used in event.g[] arrays.
+// Colors from taxonomy sheet; 'other' is a local fallback only.
 const GENRES = {
-  rock: {
-    label: 'Rock',
-    color: '#ff6b4a',
-    sub: ['indie rock', 'alt rock', 'post-punk', 'shoegaze', 'emo', 'hardcore', 'punk', 'garage rock', 'math rock', 'noise rock', 'post-rock', 'psych rock', 'prog rock', 'folk rock', 'stoner rock', 'krautrock', 'lo-fi rock']
-  },
-  metal: {
-    label: 'Metal',
-    color: '#cc3333',
-    sub: ['black metal', 'death metal', 'doom metal', 'thrash metal', 'sludge', 'heavy metal', 'grindcore', 'deathcore', 'metalcore', 'power metal', 'progressive metal', 'folk metal']
-  },
-  electronic: {
-    label: 'Electronic',
-    color: '#47b8ff',
-    sub: ['techno', 'house', 'ambient', 'idm', 'industrial', 'synth', 'ebm', 'darkwave', 'noise', 'drone', 'electro', 'rave', 'dnb', 'breakbeat', 'trance', 'club', 'dj set']
-  },
-  hiphop: {
-    label: 'Hip-Hop',
-    color: '#ffd147',
-    sub: ['rap', 'trap', 'boom bap', 'conscious rap', 'west coast', 'bay area rap', 'hyphy', 'r&b', 'neo soul', 'soul']
-  },
-  jazz: {
-    label: 'Jazz',
-    color: '#47ffb8',
-    sub: ['jazz', 'free jazz', 'jazz fusion', 'latin jazz', 'big band', 'bebop', 'cool jazz', 'avant jazz', 'spiritual jazz']
-  },
-  folk: {
-    label: 'Folk / Roots',
-    color: '#c8a96e',
-    sub: ['folk', 'singer-songwriter', 'americana', 'bluegrass', 'country', 'alt country', 'roots', 'acoustic', 'celtic', 'world']
-  },
-  classical: {
-    label: 'Classical',
-    color: '#a0a0c8',
-    sub: ['classical', 'chamber', 'orchestral', 'opera', 'choral', 'contemporary classical', 'experimental classical', 'baroque']
-  },
-  pop: {
-    label: 'Pop',
-    color: '#ff8ed4',
-    sub: ['pop', 'indie pop', 'dream pop', 'bedroom pop', 'sophisti-pop', 'synth pop', 'art pop', 'chamber pop', 'bubblegum']
-  },
-  latin: {
-    label: 'Latin',
-    color: '#ff9f47',
-    sub: ['cumbia', 'salsa', 'reggaeton', 'latin', 'norteño', 'banda', 'bolero', 'flamenco', 'tropical', 'afrobeat', 'afropop']
-  },
-  reggae: {
-    label: 'Reggae / Ska',
-    color: '#47ff8e',
-    sub: ['reggae', 'ska', 'dub', 'dancehall', 'roots reggae', 'lovers rock', 'toasting']
-  },
-  blues: {
-    label: 'Blues',
-    color: '#7a9fff',
-    sub: ['blues', 'delta blues', 'chicago blues', 'electric blues', 'blues rock', 'rhythm and blues']
-  },
-  experimental: {
-    label: 'Experimental',
-    color: '#cc47ff',
-    sub: ['experimental', 'avant-garde', 'art rock', 'free improvisation', 'no wave', 'musique concrète', 'sound art', 'glitch', 'acousmatic', 'spoken word']
-  },
-  comedy: {
-    label: 'Comedy / Spoken',
-    color: '#ffcc47',
-    sub: ['comedy', 'stand-up', 'improv', 'storytelling', 'spoken word', 'poetry', 'variety']
-  },
-  dj: {
-    label: 'DJ / Club',
-    color: '#47e8ff',
-    sub: ['dj', 'club night', 'dance', 'edm', 'disco', 'funk', 'soul dj', 'party']
-  },
-  other: {
-    label: 'Other',
-    color: '#888899',
-    sub: []
-  }
+  'Electronic':           { label: 'Electronic',        color: '#5b6cff' },
+  'Hip-Hop/R&B':          { label: 'Hip-Hop / R&B',     color: '#e07b3d' },
+  'Indie/Alt':            { label: 'Indie / Alt',        color: '#9c6bd6' },
+  'Rock':                 { label: 'Rock',               color: '#c2410c' },
+  'Punk/HC':              { label: 'Punk / HC',          color: '#dc2626' },
+  'Metal':                { label: 'Metal',              color: '#525252' },
+  'Folk/Americana':       { label: 'Folk / Americana',   color: '#a16207' },
+  'Jazz/Soul':            { label: 'Jazz / Soul',        color: '#0891b2' },
+  'Latin':                { label: 'Latin',              color: '#db2777' },
+  'Reggae/Ska':           { label: 'Reggae / Ska',       color: '#16a34a' },
+  'Noise/Experimental':   { label: 'Noise / Exp',        color: '#7c3aed' },
+  'Ambient':              { label: 'Ambient',            color: '#0d9488' },
+  'Classical':            { label: 'Classical',          color: '#7e22ce' },
+  'Comedy':               { label: 'Comedy',             color: '#ca8a04' },
+  'other':                { label: 'Other',              color: '#888899' },
 };
-const GENRE_KEYS = Object.keys(GENRES);
+// GENRE_KEYS excludes the local 'other' fallback from filter chips
+const GENRE_KEYS = Object.keys(GENRES).filter(k => k !== 'other');
 
-// ── Apps Script genre string → taxonomy key mapping ───────────────
-// The g field arrives as an array like ["Indie/Alt"] or ["Punk/HC","Electronic"]
-const GENRE_MAP = {
-  // Indie/Alt variants
-  'indie/alt': 'rock', 'indie': 'rock', 'alt': 'rock', 'alternative': 'rock',
-  'indie rock': 'rock', 'alt rock': 'rock', 'garage': 'rock', 'psych': 'rock',
-  'shoegaze': 'rock', 'post-punk': 'rock', 'noise rock': 'rock', 'lo-fi': 'rock',
-  'post-rock': 'rock', 'math rock': 'rock', 'emo': 'rock', 'folk rock': 'rock',
-  // Punk/HC
-  'punk/hc': 'rock', 'punk': 'rock', 'hardcore': 'rock', 'hc': 'rock',
-  'punk/hardcore': 'rock', 'powerviolence': 'rock', 'crust': 'rock',
-  // Metal
-  'metal': 'metal', 'heavy metal': 'metal', 'black metal': 'metal',
-  'death metal': 'metal', 'doom': 'metal', 'thrash': 'metal', 'sludge': 'metal',
-  'doom metal': 'metal', 'thrash metal': 'metal', 'grindcore': 'metal',
-  // Electronic
-  'electronic': 'electronic', 'electro': 'electronic', 'techno': 'electronic',
-  'house': 'electronic', 'ambient': 'electronic', 'idm': 'electronic',
-  'industrial': 'electronic', 'ebm': 'electronic', 'darkwave': 'electronic',
-  'synth': 'electronic', 'drone': 'electronic', 'noise': 'electronic',
-  'club': 'electronic', 'rave': 'electronic', 'dnb': 'electronic',
-  // Hip-Hop
-  'hip-hop': 'hiphop', 'hip-hop/r&b': 'hiphop', 'hip hop': 'hiphop',
-  'hiphop': 'hiphop', 'rap': 'hiphop', 'r&b': 'hiphop', 'rnb': 'hiphop',
-  'neo soul': 'hiphop', 'soul': 'hiphop', 'trap': 'hiphop',
-  // Jazz
-  'jazz': 'jazz', 'free jazz': 'jazz', 'jazz fusion': 'jazz',
-  'latin jazz': 'jazz', 'avant jazz': 'jazz', 'spiritual jazz': 'jazz',
-  // Folk/Roots
-  'folk': 'folk', 'folk/roots': 'folk', 'americana': 'folk',
-  'bluegrass': 'folk', 'country': 'folk', 'singer-songwriter': 'folk',
-  'acoustic': 'folk', 'roots': 'folk', 'world': 'folk',
-  // Classical
-  'classical': 'classical', 'chamber': 'classical', 'orchestral': 'classical',
-  'opera': 'classical', 'choral': 'classical',
-  // Pop
-  'pop': 'pop', 'indie pop': 'pop', 'dream pop': 'pop', 'synth pop': 'pop',
-  'art pop': 'pop', 'power pop': 'pop',
-  // Latin
-  'latin': 'latin', 'cumbia': 'latin', 'salsa': 'latin', 'reggaeton': 'latin',
-  'afrobeat': 'latin', 'afropop': 'latin', 'tropical': 'latin',
-  // Reggae/Ska
-  'reggae': 'reggae', 'ska': 'reggae', 'dub': 'reggae', 'dancehall': 'reggae',
-  // Blues
-  'blues': 'blues', 'blues rock': 'blues', 'rhythm and blues': 'blues',
-  // Experimental
-  'experimental': 'experimental', 'avant-garde': 'experimental',
-  'avant garde': 'experimental', 'free improv': 'experimental',
-  'sound art': 'experimental', 'noise/experimental': 'experimental',
-  // Comedy/Spoken
-  'comedy': 'comedy', 'spoken word': 'comedy', 'storytelling': 'comedy',
-  'stand-up': 'comedy', 'variety': 'comedy',
-  // DJ/Club
-  'dj': 'dj', 'dj set': 'dj', 'club night': 'dj', 'dance': 'dj',
-  'disco': 'dj', 'funk': 'dj', 'edm': 'dj',
-};
-
-// Resolve the g field (string or array) to a single taxonomy key
+// Resolve event.g[] to a GENRES key.
+// Events from bay_shows_merged use exact taxonomy top strings (e.g. "Punk/HC"),
+// so this is mostly a direct lookup with a lowercase fallback for legacy data.
 const resolveGenre = (g) => {
   if (!g) return 'other';
   const arr = Array.isArray(g) ? g : [g];
   for (const raw of arr) {
-    const key = GENRE_MAP[raw.toLowerCase().trim()];
-    if (key) return key;
-    // Also try direct key match (in case Apps Script outputs our keys)
-    if (GENRES[raw.toLowerCase()]) return raw.toLowerCase();
+    if (GENRES[raw]) return raw;                       // exact match (new data)
+    // Case-insensitive fallback for any legacy data
+    const found = Object.keys(GENRES).find(k => k.toLowerCase() === raw.toLowerCase().trim());
+    if (found) return found;
   }
   return 'other';
 };
