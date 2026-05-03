@@ -570,7 +570,7 @@ function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTa
           tagged && React.createElement("span", { style: { ...S.tag('#e8ff47'), marginLeft: '6px' } }, "★"),
           hasTicket && React.createElement("span", { style: { ...S.tag('var(--green)'), marginLeft: '6px' } }, "🎫"),
           isDJ && React.createElement("span", { style: { ...S.djBadge, marginLeft: '6px' } }, "DJ"),
-          event.recurring && React.createElement("span", { style: { ...S.tag('#888855'), marginLeft: '6px', fontSize: '9px' } }, "recurring")
+          event.rec && React.createElement("span", { style: { ...S.tag('#888855'), marginLeft: '6px', fontSize: '9px' } }, "recurring")
         ),
         // Venue + time + region
         React.createElement("div", { style: S.venueLine },
@@ -1012,8 +1012,8 @@ function App() {
       // liveOnly: hide DJ events even when showDJ is on
       if (prefs.liveOnly && e._isDJ) return false;
       // Recurring filter
-      if (prefs.hideRecurring && e.recurring) return false;
-      if (prefs.recurringOnly && !e.recurring) return false;
+      if (prefs.hideRecurring && e.rec) return false;
+      if (prefs.recurringOnly && !e.rec) return false;
 
       if (prefs.freeOnly && !(e.p === '0' || e.p === 0 || e.pr === 'free')) return false;
       if (prefs.allAgesOnly && !(e.age === 'all' || e.age === 'all-ages')) return false;
