@@ -67,7 +67,7 @@ const CACHE_KEY    = 'bay-events-cache-v1';
 const TAGS_KEY     = 'bay-events-tags-v9';
 const SNAP_KEY     = 'bay-events-snap-v9';
 const MANUAL_KEY   = 'bay-events-manual-v9';
-const PREFS_KEY    = 'bay-prefs-v16';
+const PREFS_KEY    = 'bay-prefs-v17';
 const HIDDEN_KEY   = 'bay-hidden-v1';   // { [eventId]: epochMs }
 const TICKETS_KEY  = 'bay-tickets-v1';  // { [eventId]: epochMs }
 const DJ_OVERRIDE_KEY = 'bay-dj-override-v1'; // { [eventId]: 'live'|'dj' }
@@ -834,23 +834,26 @@ function App() {
   const [hidden, setHidden] = useState(() => lsGet(HIDDEN_KEY, {}));
   const [djOverrides, setDjOverrides] = useState(() => lsGet(DJ_OVERRIDE_KEY, {}));
   const [manual, setManual] = useState(() => lsGet(MANUAL_KEY, []));
+  const PREFS_DEFAULTS = {
+    view: 'week',
+    regions: [],
+    genres: [],
+    freeOnly: false,
+    allAgesOnly: false,
+    showSaved: false,
+    subgenres: [],
+    showDJ: false,      // 19hz events hidden by default
+    liveOnly: false,
+    showHidden: false,
+    showTickets: false,
+    showStarredNoTicket: false,
+    hideRecurring: false,
+    recurringOnly: false,
+  };
   const [prefs, setPrefs] = useState(() => {
-    const saved = lsGet(PREFS_KEY, {
-      view: 'week',
-      regions: [],
-      genres: [],
-      freeOnly: false,
-      allAgesOnly: false,
-      showSaved: false,
-      subgenres: [],
-      showDJ: false,
-      liveOnly: false,
-      showHidden: false,
-      showTickets: false,
-      showStarredNoTicket: false,
-      hideRecurring: false,
-      recurringOnly: false,
-    });
+    // Always merge defaults first so new keys are never undefined
+    const stored = lsGet(PREFS_KEY, {});
+    const saved = { ...PREFS_DEFAULTS, ...stored };
     const urlView = new URLSearchParams(window.location.search).get('view');
     if (urlView && ['today', 'week', 'month'].includes(urlView)) saved.view = urlView;
     return saved;
@@ -887,7 +890,7 @@ function App() {
       const user = await ui.json();
       setDriveUser({ email: user.email });
       const drivePrefs = await driveRead(token, GOOG_PREFS_FILE);
-      if (drivePrefs) { savePrefs({ ...prefs, ...drivePrefs }); }
+      if (drivePrefs) { savePrefs({ ...PREFS_DEFAULTS, ...prefs, ...drivePrefs }); }
       else { await driveWrite(token, GOOG_PREFS_FILE, prefs); }
       const localTags = lsGet(TAGS_KEY, {});
       const driveTags = await driveRead(token, GOOG_TAGS_FILE);
