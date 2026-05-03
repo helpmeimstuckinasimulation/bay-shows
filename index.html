@@ -80,9 +80,10 @@ const PREFS_KEY = 'bay-prefs-v14';
 const TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 // ── Google Drive OAuth (cloud sync for prefs + tags) ─────────────
-// ── Google Drive OAuth — redirect flow ───────────────────────────
-// Uses OAuth 2.0 implicit grant (token in URL hash on return).
-// No popup, no GIS library — works reliably on iOS PWAs.
+// ── Google Drive OAuth — Safari tab flow ─────────────────────────
+// Opens auth.html in a new Safari tab (real browser context, not PWA).
+// auth.html runs GIS requestAccessToken, writes token to localStorage,
+// then closes. This app polls for the tab to close and reads the token.
 const GOOG_CLIENT_ID  = '1030489561991-kbu11qmn3o58ahu69d27f3g09qhai1ns.apps.googleusercontent.com';
 const GOOG_SCOPE      = 'https://www.googleapis.com/auth/drive.file';
 const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
@@ -100,38 +101,45 @@ const getStoredToken = () => {
   return t;
 };
 
-// Redirect to Google OAuth consent screen.
-// Google will redirect back to this page with #access_token=...&expires_in=...
-// On return, parseOAuthHash() (called at app init) picks up the token.
-const initiateGoogleAuth = () => {
-  if (!GOOG_CLIENT_ID) { alert('Drive sync not configured (no client ID)'); return; }
-  // Build the redirect URI: current origin + path, no hash
-  const redirectUri = window.location.origin + window.location.pathname;
-  const params = new URLSearchParams({
-    client_id:     GOOG_CLIENT_ID,
-    redirect_uri:  redirectUri,
-    response_type: 'token',
-    scope:         GOOG_SCOPE,
-    include_granted_scopes: 'true',
-  });
-  window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
-};
+// Open auth.html in a new tab and poll until it closes or a token appears.
+// Resolves with access_token string, rejects on timeout or error.
+const openAuthTab = () => new Promise((resolve, reject) => {
+  // auth.html lives alongside index.html
+  const authUrl = window.location.origin + window.location.pathname.replace(/[^/]*$/, '') + 'auth.html';
+  const tab = window.open(authUrl, '_blank');
+  if (!tab) {
+    reject(new Error('popup_blocked'));
+    return;
+  }
 
-// Parse the OAuth token from the URL hash on return from Google.
-// Returns { access_token, expires_at } or null.
-const parseOAuthHash = () => {
-  const hash = window.location.hash.slice(1); // strip leading #
-  if (!hash || !hash.includes('access_token')) return null;
-  const params = new URLSearchParams(hash);
-  const access_token = params.get('access_token');
-  const expires_in   = parseInt(params.get('expires_in') || '3600', 10);
-  if (!access_token) return null;
-  const tok = { access_token, expires_at: Date.now() + expires_in * 1000 };
-  lsSet(GDRIVE_AUTH_KEY, tok);
-  // Clean the token out of the URL so it doesn't persist in browser history
-  window.history.replaceState(null, '', window.location.pathname);
-  return tok;
-};
+  const startTime = Date.now();
+  const TIMEOUT_MS = 5 * 60 * 1000; // 5 min
+
+  const poll = setInterval(() => {
+    // Check if token appeared in localStorage (written by auth.html)
+    const stored = getStoredToken();
+    if (stored) {
+      clearInterval(poll);
+      resolve(stored.access_token);
+      return;
+    }
+    // Check if tab closed without writing a token
+    if (tab.closed) {
+      clearInterval(poll);
+      // One final check — auth.html may have written just before closing
+      const finalCheck = getStoredToken();
+      if (finalCheck) { resolve(finalCheck.access_token); return; }
+      reject(new Error('Tab closed without completing sign-in'));
+      return;
+    }
+    // Timeout
+    if (Date.now() - startTime > TIMEOUT_MS) {
+      clearInterval(poll);
+      try { tab.close(); } catch(e) {}
+      reject(new Error('Sign-in timed out'));
+    }
+  }, 500);
+});
 
 // Generic: find or create a named JSON file in the app's Drive space
 async function driveFileId(token, filename) {
@@ -1265,17 +1273,10 @@ function App() {
     }
   }, [prefs]);
 
-  // ── On mount: check for OAuth redirect return (token in URL hash) ──
+  // ── On mount: restore session if valid stored token exists ─────
   useEffect(() => {
-    const tok = parseOAuthHash(); // cleans URL if token found
-    if (tok) {
-      runDriveSync(tok.access_token);
-      return;
-    }
-    // Also restore session if a valid stored token exists
     const stored = getStoredToken();
     if (stored) {
-      // Restore driveUser from stored token via userinfo (quiet, no sync message)
       fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: `Bearer ${stored.access_token}` }
       }).then(r => r.json()).then(u => {
@@ -1284,21 +1285,35 @@ function App() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Sign-in button handler: redirect to Google ────────────────
-  const signInWithGoogle = useCallback(() => {
+  // ── Sign-in button: open auth.html in new Safari tab ─────────
+  const signInWithGoogle = useCallback(async () => {
     if (!GOOG_CLIENT_ID) {
-      setDriveSyncMsg('Drive sync not configured (no client ID)');
+      setDriveSyncMsg('Drive sync not configured');
       return;
     }
-    initiateGoogleAuth(); // full-page redirect — no return from here
-  }, []);
+    setDriveSyncing(true);
+    setDriveSyncMsg('Opening Google sign-in tab…');
+    try {
+      const token = await openAuthTab();
+      await runDriveSync(token);
+    } catch (e) {
+      if (e.message === 'popup_blocked') {
+        setDriveSyncMsg('Tab blocked — allow pop-ups for this site in Safari settings');
+      } else {
+        setDriveSyncMsg('Sign-in failed: ' + e.message);
+      }
+      setDriveSyncing(false);
+      setTimeout(() => setDriveSyncMsg(''), 7000);
+    }
+  }, [runDriveSync]);
 
   // ── Re-sync button (when already signed in) ───────────────────
-  const reSyncDrive = useCallback(() => {
+  const reSyncDrive = useCallback(async () => {
     const tok = getStoredToken();
     if (tok) { runDriveSync(tok.access_token); return; }
-    initiateGoogleAuth(); // token expired — re-auth
-  }, [runDriveSync]);
+    // Token expired — re-auth via tab
+    signInWithGoogle();
+  }, [runDriveSync, signInWithGoogle]);
 
   const syncPrefsToDrive = useCallback(async (newPrefs) => {
     const tok = getStoredToken();
@@ -1516,7 +1531,7 @@ function App() {
         onClick: reSyncDrive
       }, driveSyncing ? '…' : '☁')
     : GOOG_CLIENT_ID && /*#__PURE__*/React.createElement("button", {
-        title: 'Sign in with Google to sync saved shows + prefs',
+        title: 'Sign in with Google (opens new tab) to sync saved shows + prefs',
         style: { ...S.actionBtn, color: 'var(--text3)', fontSize: '11px' },
         onClick: signInWithGoogle
       }, driveSyncing ? '…' : '☁̲')
