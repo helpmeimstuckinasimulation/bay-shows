@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -10,7 +9,7 @@
     body {
       background: #0a0a0f;
       color: #e0e0f0;
-      font-family: 'JetBrains Mono', monospace, monospace;
+      font-family: 'JetBrains Mono', monospace;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -20,10 +19,10 @@
       padding: 24px;
       text-align: center;
     }
-    .icon { font-size: 36px; }
+    .icon  { font-size: 36px; }
     .title { font-size: 14px; color: #a0a0c0; letter-spacing: 0.05em; }
-    .status { font-size: 12px; color: #6060a0; margin-top: 4px; }
-    .error { color: #ff4444; font-size: 12px; max-width: 300px; }
+    .status { font-size: 12px; color: #6060a0; margin-top: 4px; min-height: 18px; }
+    .error { color: #ff6060; font-size: 11px; max-width: 300px; line-height: 1.5; }
     .btn {
       margin-top: 8px;
       padding: 8px 20px;
@@ -41,88 +40,74 @@
 <body>
   <div class="icon">☁</div>
   <div class="title">BAY SHOWS</div>
-  <div class="status" id="status">Connecting to Google…</div>
+  <div class="status" id="status">Connecting…</div>
   <div class="error" id="error" style="display:none"></div>
   <button class="btn" id="retryBtn" style="display:none" onclick="startAuth()">Try Again</button>
-
-  <script src="https://accounts.google.com/gsi/client" onload="onGISLoad()" onerror="showError('Failed to load Google auth library. Check your connection.')"></script>
-
-  <script>
-    // Timeout if GIS script never calls onGISLoad
-    setTimeout(() => {
-      if (!window._gisLoaded) showError('Google auth library timed out. Check your connection and try again.');
-    }, 10000);
-  </script>
+  <button class="btn" id="closeBtn" style="display:none" onclick="window.close()">Close Tab</button>
 
   <script>
-    // ── Config — must match index.html ─────────────────────────
-    const GOOG_CLIENT_ID  = '1030489561991-kbu11qmn3o58ahu69d27f3g09qhai1ns.apps.googleusercontent.com';
-    const GOOG_SCOPE      = 'https://www.googleapis.com/auth/drive.file';
+    const WORKER_BASE     = 'https://bay-shows-auth.dranahan.workers.dev';
     const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
-    // ───────────────────────────────────────────────────────────
 
-    function setStatus(msg) {
-      document.getElementById('status').textContent = msg;
-    }
-
+    function setStatus(msg) { document.getElementById('status').textContent = msg; }
     function showError(msg) {
-      setStatus('Sign-in failed');
+      setStatus('');
       const el = document.getElementById('error');
       el.textContent = msg;
       el.style.display = 'block';
       document.getElementById('retryBtn').style.display = 'inline-block';
     }
-
-    window._gisLoaded = true;
-    function onGISLoad() {
-      setStatus('Google loaded — requesting access…');
-      // Small delay to ensure GIS is fully ready
-      setTimeout(startAuth, 300);
+    function showSuccess() {
+      setStatus('Signed in ✓ — returning to app…');
+      document.getElementById('closeBtn').style.display = 'inline-block';
     }
 
     function startAuth() {
       document.getElementById('error').style.display = 'none';
       document.getElementById('retryBtn').style.display = 'none';
-      setStatus('Opening Google sign-in…');
-
-      try {
-        const client = google.accounts.oauth2.initTokenClient({
-          client_id: GOOG_CLIENT_ID,
-          scope: GOOG_SCOPE,
-          callback: (resp) => {
-            if (resp.error) {
-              showError('Google error: ' + resp.error + (resp.error_description ? ' — ' + resp.error_description : ''));
-              return;
-            }
-            // Store token to localStorage — main app will read this
-            const tok = {
-              access_token: resp.access_token,
-              expires_at: Date.now() + (resp.expires_in || 3600) * 1000
-            };
-            try {
-              localStorage.setItem(GDRIVE_AUTH_KEY, JSON.stringify(tok));
-              setStatus('Signed in ✓ — returning to app…');
-              // Give the main app a moment to detect the storage event before we close
-              setTimeout(() => {
-                try { window.close(); } catch(e) {}
-                // Fallback if window.close() is blocked: show instructions
-                setTimeout(() => {
-                  setStatus('Done! You can close this tab and return to Bay Shows.');
-                }, 800);
-              }, 400);
-            } catch(e) {
-              showError('Could not save token: ' + e.message);
-            }
-          }
-        });
-
-        // 'consent' always shows the account picker — required on first auth
-        client.requestAccessToken({ prompt: 'consent' });
-      } catch(e) {
-        showError('Could not initialise Google auth: ' + e.message);
-      }
+      document.getElementById('closeBtn').style.display = 'none';
+      setStatus('Redirecting to Google…');
+      window.location.href = `${WORKER_BASE}/auth`;
     }
-  </script>
 
+    function handleReturn() {
+      const params     = new URLSearchParams(window.location.search);
+      const token      = params.get('access_token');
+      const expiresIn  = parseInt(params.get('expires_in') || '3600', 10);
+      const error      = params.get('error');
+
+      if (error) {
+        const messages = {
+          'google_error:access_denied': 'Sign-in cancelled.',
+          'invalid_state':              'Session expired — please try again.',
+          'token_exchange_failed':      'Google token exchange failed. Try again.',
+        };
+        showError(messages[error] || `Sign-in error: ${error}`);
+        return;
+      }
+
+      if (token) {
+        const tok = {
+          access_token: token,
+          expires_at:   Date.now() + expiresIn * 1000,
+        };
+        try {
+          localStorage.setItem(GDRIVE_AUTH_KEY, JSON.stringify(tok));
+        } catch(e) {
+          showError('Could not save token: ' + e.message);
+          return;
+        }
+        window.history.replaceState(null, '', window.location.pathname);
+        showSuccess();
+        setTimeout(() => { try { window.close(); } catch(e) {} }, 600);
+        return;
+      }
+
+      // No params — fresh open, kick off the flow
+      startAuth();
+    }
+
+    handleReturn();
+  </script>
 </body>
 </html>
