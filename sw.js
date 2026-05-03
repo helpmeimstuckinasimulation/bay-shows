@@ -1,6 +1,6 @@
 // Bay Shows PWA - Service Worker
 // Cache version — bump this to force full cache refresh
-const CACHE_VERSION = ‘bay-shows-v3’;
+const CACHE_VERSION = ‘bay-shows-v4’;
 const DATA_CACHE = ‘bay-shows-data-v1’;
 
 const STATIC_ASSETS = [
@@ -14,7 +14,6 @@ const STATIC_ASSETS = [
 ‘https://unpkg.com/react-dom@18/umd/react-dom.production.min.js’,
 ‘https://unpkg.com/@babel/standalone/babel.min.js’,
 ‘https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,300;1,400&display=swap’,
-‘https://accounts.google.com/gsi/client’,
 ];
 
 // Install: pre-cache static shell
@@ -48,8 +47,15 @@ keys
 self.addEventListener(‘fetch’, (event) => {
 const url = new URL(event.request.url);
 
+// Google auth — always network, never cache
+// (Caching GIS or OAuth endpoints breaks the sign-in flow)
+if (url.hostname === ‘accounts.google.com’ || url.hostname === ‘oauth2.googleapis.com’) {
+event.respondWith(fetch(event.request));
+return;
+}
+
 // Drive data URL — network first, cache on success
-if ((url.hostname === ‘docs.google.com’ && url.pathname.includes(‘export’)) || url.hostname === ‘accounts.google.com’) {
+if (url.hostname === ‘docs.google.com’ && url.pathname.includes(‘export’)) {
 event.respondWith(
 fetch(event.request)
 .then((response) => {
