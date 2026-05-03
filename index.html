@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -49,8 +50,11 @@
   <div id="root"></div>
 
   <!-- Google Identity Services (for optional Drive prefs sync) -->
+
   <script src="https://accounts.google.com/gsi/client" async defer></script>
+
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
   <script>
@@ -236,6 +240,24 @@ const GENRES = {
   'Comedy':               { label: 'Comedy',             color: '#ca8a04' },
   'other':                { label: 'Other',              color: '#888899' },
 };
+// Subgenres for each top — from bay_shows_taxonomy_json v2 subToTop map
+const SUBGENRES_BY_TOP = {
+  'Electronic':         ['Bass', 'Club/Global', 'Disco/Funk', 'EDM/Dance Pop', 'House', 'Synthwave/EBM', 'Techno', 'Trance/Hard Dance'],
+  'Hip-Hop/R&B':        ['Hip-Hop', 'Lo-fi/Downtempo', 'R&B/Soul', 'Trap'],
+  'Indie/Alt':          ['Indie Electronic', 'Indie Pop', 'Indie Rock', 'Post-punk/Goth Rock', 'Shoegaze/Dream Pop'],
+  'Rock':               ['Alt-Metal/Crossover', 'Classic/Hard Rock', 'Prog/Art Rock', 'Psych/Garage'],
+  'Punk/HC':            ['Grindcore/Powerviolence', 'Hardcore', 'Post-Hardcore/Emo', 'Punk', 'Ska Punk/Skate'],
+  'Metal':              ['Black/Death Metal', 'Doom/Sludge/Stoner', 'Metalcore/Deathcore', 'Prog/Power Metal', 'Thrash'],
+  'Folk/Americana':     ['Americana/Country', 'Bluegrass/Roots', 'Folk', 'Singer-Songwriter', 'World Folk'],
+  'Jazz/Soul':          ['Blues', 'Gospel', 'Jazz', 'Soul'],
+  'Latin':              ['Cumbia', 'Latin Electronic', 'Latin Rock/Indie', 'Reggaetón/Perreo'],
+  'Reggae/Ska':         ['Dub', 'Reggae/Dancehall', 'Ska'],
+  'Noise/Experimental': ['Drone', 'IDM/Glitch', 'Industrial', 'Live A/V', 'Noise', 'Power Electronics'],
+  'Ambient':            ['Ambient', 'Dungeon Synth', 'New Age/Meditative'],
+  'Classical':          ['Chamber/Crossover', 'Classical', 'Contemporary Classical'],
+  'Comedy':             ['Comedy'],
+};
+
 // GENRE_KEYS excludes the local 'other' fallback from filter chips
 const GENRE_KEYS = Object.keys(GENRES).filter(k => k !== 'other');
 
@@ -1344,7 +1366,7 @@ function App() {
       if (prefs.showSaved && !tags[e.id]) return false;
       if (prefs.regions && prefs.regions.length > 0 && !prefs.regions.includes(e.r)) return false;
       if (prefs.genres && prefs.genres.length > 0 && !prefs.genres.includes(resolveGenre(e.g))) return false;
-      if (prefs.subgenres && prefs.subgenres.length > 0 && !prefs.subgenres.some(sg => (Array.isArray(e.sg) ? e.sg : [e.sg || '']).some(s => s.toLowerCase().includes(sg.toLowerCase())))) return false;
+      if (prefs.subgenres && prefs.subgenres.length > 0) { const evSgs = Array.isArray(e.sg) ? e.sg : [e.sg || '']; if (!prefs.subgenres.some(sg => evSgs.some(s => s === sg || s.toLowerCase() === sg.toLowerCase()))) return false; }
       // View windowing
       if (prefs.view === 'today') {
         return e.d === today;
@@ -1386,10 +1408,13 @@ function App() {
   };
   const toggleGenre = g => {
     const genres = prefs.genres || [];
-    const next = genres.includes(g) ? genres.filter(x => x !== g) : [...genres, g];
+    const wasActive = genres.includes(g);
+    const next = wasActive ? genres.filter(x => x !== g) : [...genres, g];
     savePrefs({
       ...prefs,
-      genres: next
+      genres: next,
+      // Clear subgenres when deactivating the genre, or when switching to a different genre
+      subgenres: wasActive ? [] : (next.length === 1 ? (prefs.subgenres || []) : [])
     });
   };
   const handleAction = (type, event) => {
@@ -1502,7 +1527,41 @@ function App() {
       style: S.genreChip(GENRES[g].color, active),
       onClick: () => toggleGenre(g)
     }, GENRES[g].label);
-  })), /*#__PURE__*/React.createElement("div", {
+  })),
+  // ── Subgenre chips — visible only when exactly one genre is active ──
+  (prefs.genres || []).length === 1 && SUBGENRES_BY_TOP[(prefs.genres)[0]] && SUBGENRES_BY_TOP[(prefs.genres)[0]].length > 1 &&
+  /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.filters,
+      paddingTop: '3px',
+      paddingBottom: '3px',
+      background: 'var(--bg2)',
+      borderTop: '1px solid var(--border2)'
+    },
+    className: "filter-scroll"
+  }, SUBGENRES_BY_TOP[(prefs.genres)[0]].map(sg => {
+    const sgActive = (prefs.subgenres || []).includes(sg);
+    const color = GENRES[(prefs.genres)[0]].color;
+    return /*#__PURE__*/React.createElement("button", {
+      key: sg,
+      style: {
+        ...S.filterChip(sgActive),
+        fontSize: '9px',
+        border: sgActive ? `1px solid ${color}` : '1px solid var(--border2)',
+        color: sgActive ? color : 'var(--text2)',
+        background: sgActive ? color + '22' : 'transparent',
+        padding: '2px 7px',
+      },
+      onClick: () => {
+        const subs = prefs.subgenres || [];
+        savePrefs({
+          ...prefs,
+          subgenres: sgActive ? subs.filter(s => s !== sg) : [...subs, sg]
+        });
+      }
+    }, sg);
+  })),
+  /*#__PURE__*/React.createElement("div", {
     style: {
       ...S.filters,
       paddingTop: '4px',
@@ -1663,5 +1722,6 @@ function App() {
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(/*#__PURE__*/React.createElement(App, null));
   </script>
+
 </body>
 </html>
