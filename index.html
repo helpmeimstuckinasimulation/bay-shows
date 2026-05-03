@@ -569,7 +569,8 @@ function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTa
           newEvent && React.createElement("span", { style: { ...S.newBadge, marginLeft: '6px' } }, "NEW"),
           tagged && React.createElement("span", { style: { ...S.tag('#e8ff47'), marginLeft: '6px' } }, "★"),
           hasTicket && React.createElement("span", { style: { ...S.tag('var(--green)'), marginLeft: '6px' } }, "🎫"),
-          isDJ && React.createElement("span", { style: { ...S.djBadge, marginLeft: '6px' } }, "DJ")
+          isDJ && React.createElement("span", { style: { ...S.djBadge, marginLeft: '6px' } }, "DJ"),
+          event.recurring && React.createElement("span", { style: { ...S.tag('#888855'), marginLeft: '6px', fontSize: '9px' } }, "recurring")
         ),
         // Venue + time + region
         React.createElement("div", { style: S.venueLine },
@@ -757,6 +758,8 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
     React.createElement(Row, { label: "Show hidden events", field: "showHidden", desc: "Events you've dismissed with ✕" }),
     React.createElement(Row, { label: "Show DJ / club events", field: "showDJ", desc: "Hidden by default — 19hz DJ nights etc." }),
     React.createElement(Row, { label: "Live events only", field: "liveOnly", desc: "Exclude DJ / club events" }),
+    React.createElement(Row, { label: "Hide recurring events", field: "hideRecurring", desc: "Filters out weekly/monthly club nights" }),
+    React.createElement(Row, { label: "Recurring events only", field: "recurringOnly", desc: "Show only regular series (useful to find DJ nights)" }),
     React.createElement("div", { style: { display: 'flex', gap: '8px', marginTop: '12px' } },
       React.createElement("button", { style: { ...S.btnPrimary, flex: 1, marginTop: 0 }, onClick: () => { savePrefs({ ...prefs, ...local }); onClose(); } }, "Save"),
       React.createElement("button", { style: { ...S.btnSecondary, flex: 1, marginTop: 0 }, onClick: onClose }, "Cancel")
@@ -845,6 +848,8 @@ function App() {
       showHidden: false,
       showTickets: false,
       showStarredNoTicket: false,
+      hideRecurring: false,
+      recurringOnly: false,
     });
     const urlView = new URLSearchParams(window.location.search).get('view');
     if (urlView && ['today', 'week', 'month'].includes(urlView)) saved.view = urlView;
@@ -998,11 +1003,14 @@ function App() {
       // Hidden filter
       if (!prefs.showHidden && hidden[e.id]) return false;
 
-      // DJ filter (default hidden)
-      if (e._isDJ) {
-        if (prefs.liveOnly) return false;
-        if (!prefs.showDJ) return false;
-      }
+      // DJ / club filter — all 19hz events hidden by default
+      // showDJ must be explicitly true to surface them
+      if (e._isDJ && prefs.showDJ !== true) return false;
+      // liveOnly: hide DJ events even when showDJ is on
+      if (prefs.liveOnly && e._isDJ) return false;
+      // Recurring filter
+      if (prefs.hideRecurring && e.recurring) return false;
+      if (prefs.recurringOnly && !e.recurring) return false;
 
       if (prefs.freeOnly && !(e.p === '0' || e.p === 0 || e.pr === 'free')) return false;
       if (prefs.allAgesOnly && !(e.age === 'all' || e.age === 'all-ages')) return false;
@@ -1084,7 +1092,8 @@ function App() {
 
   // Count active secondary filters for badge
   const activeSecondaryCount = [prefs.freeOnly, prefs.allAgesOnly, prefs.showSaved, prefs.showTickets,
-    prefs.showStarredNoTicket, prefs.showHidden, prefs.showDJ, prefs.liveOnly].filter(Boolean).length;
+    prefs.showStarredNoTicket, prefs.showHidden, prefs.showDJ, prefs.liveOnly,
+    prefs.hideRecurring, prefs.recurringOnly].filter(Boolean).length;
 
   return React.createElement("div", { style: S.app },
     React.createElement("style", null, ANIM_STYLE),
