@@ -394,18 +394,18 @@ function midpointMins(event) {
 async function fetchEvents() {
   const cached = lsGet(CACHE_KEY);
   if (cached && cached.ts && Date.now() - cached.ts < TTL_MS && Array.isArray(cached.events)) {
-    return { events: cached.events, meta: cached.meta || null, fromCache: true, ts: cached.ts };
+    return { events: cached.events, meta: cached.meta || null, artistLinks: cached.artistLinks || {}, fromCache: true, ts: cached.ts };
   }
   const resp = await fetch(DRIVE_URL);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const text = await resp.text();
   const trimmed = text.replace(/^\uFEFF/, '').replace(/[\r\n]/g, '').trim();
-  let events, meta = null;
+  let events, meta = null, artistLinks = {};
   const objStart = trimmed.indexOf('{');
   if (objStart !== -1) {
     try {
       const parsed = JSON.parse(trimmed.slice(objStart));
-      if (parsed._meta && Array.isArray(parsed.events)) { meta = parsed._meta; events = parsed.events; }
+      if (parsed._meta && Array.isArray(parsed.events)) { meta = parsed._meta; events = parsed.events; artistLinks = parsed.artistLinks || {}; }
     } catch {}
   }
   if (!events) {
@@ -415,8 +415,8 @@ async function fetchEvents() {
     events = JSON.parse(trimmed.slice(arrStart, arrEnd + 1));
   }
   const ts = Date.now();
-  lsSet(CACHE_KEY, { events, meta, ts });
-  return { events, meta, fromCache: false, ts };
+  lsSet(CACHE_KEY, { events, meta, artistLinks, ts });
+  return { events, meta, artistLinks, fromCache: false, ts };
 }
 
 // ── Date helpers ──────────────────────────────────────────────────
@@ -625,16 +625,20 @@ function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTa
 }
 
 // ── Artist Panel (slide-up sheet) ─────────────────────────────────
-function ArtistPanel({ artistName, events, onClose }) {
+function ArtistPanel({ artistName, events, artistLinks, onClose }) {
   const artistEvents = events.filter(e =>
     artistArray(e.a).some(a => a.toLowerCase() === artistName.toLowerCase())
   ).sort((a, b) => a.d < b.d ? -1 : 1);
 
-  // Find MB links from any event featuring this artist
-  const mbLinks = artistEvents.reduce((acc, e) => {
-    if (e._mbLinks) Object.assign(acc, e._mbLinks);
-    return acc;
-  }, {});
+  // Look up links by normalized artist key (v2.14p).
+  // artistLinks is keyed by artistCacheKey(name) = lowercase + diacritic-stripped.
+  // We normalize the name the same way: lowercase, strip common diacritics.
+  const normalizeKey = name => name.toLowerCase().trim()
+    .replace(/[øØ]/g, 'o').replace(/[æÆ]/g, 'ae').replace(/[åÅ]/g, 'a')
+    .replace(/[ðÐ]/g, 'd').replace(/[þÞ]/g, 'th').replace(/ß/g, 'ss')
+    .replace(/[łŁ]/g, 'l').replace(/[œŒ]/g, 'oe')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const mbLinks = (artistLinks && artistLinks[normalizeKey(artistName)]) || {};
 
   const LINK_DEFS = [
     ['spotify', 'Spotify', '#1db954'],
@@ -826,6 +830,7 @@ function InstallBanner({ onDismiss }) {
 // ── Main App ──────────────────────────────────────────────────────
 function App() {
   const [events, setEvents] = useState([]);
+  const [artistLinks, setArtistLinks] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [cacheInfo, setCacheInfo] = useState(null);
@@ -952,7 +957,7 @@ function App() {
     if (force) { lsSet(CACHE_KEY, null); setRefreshing(true); }
     setError(null);
     try {
-      const { events: fetched, meta, fromCache, ts } = await fetchEvents();
+      const { events: fetched, meta, artistLinks: fetchedLinks, fromCache, ts } = await fetchEvents();
       if (!snapRef.current) {
         const snap = lsGet(SNAP_KEY, null);
         if (!snap) {
@@ -963,6 +968,7 @@ function App() {
         snapRef.current = true;
       }
       setEvents(fetched);
+      setArtistLinks(fetchedLinks || {});
       const t = todayStr();
       setExpandedDays(new Set([t])); // will add more below
       const tmrw = new Date(); tmrw.setDate(tmrw.getDate() + 1);
@@ -972,7 +978,7 @@ function App() {
     } catch (err) {
       setError(err.message);
       const stale = lsGet(CACHE_KEY);
-      if (stale && stale.events) { setEvents(stale.events); setCacheInfo({ fromCache: true, ts: stale.ts, stale: true }); }
+      if (stale && stale.events) { setEvents(stale.events); setArtistLinks(stale.artistLinks || {}); setCacheInfo({ fromCache: true, ts: stale.ts, stale: true }); }
     } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
@@ -1298,7 +1304,8 @@ function App() {
     // ── Modals ──
     artistPanel && React.createElement(ArtistPanel, {
       artistName: artistPanel.name,
-      events: allEvents,
+      events:       allEvents,
+      artistLinks:  artistLinks,
       onClose: () => setArtistPanel(null)
     }),
     venuePanel && React.createElement(VenuePanel, {
