@@ -55,7 +55,8 @@ return;
 }
 
 // Drive data URL — network first, cache on success
-if (url.hostname === ‘docs.google.com’ && url.pathname.includes(‘export’)) {
+// v2.15: bay_shows_merged is a plain Drive file — match drive.google.com/uc?export=download
+if (url.hostname === 'drive.google.com' && url.searchParams.get('export') === 'download') {
 event.respondWith(
 fetch(event.request)
 .then((response) => {
