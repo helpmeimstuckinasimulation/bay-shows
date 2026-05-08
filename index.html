@@ -61,11 +61,10 @@ const {
 } = React;
 
 // ── Constants ────────────────────────────────────────────────────
-const DRIVE_DOC_ID = '160iuE4fuqAczaxIYZuCQKK8NE2JGN4oX'; // ← UPDATE: paste OUTPUT_FILE_ID from Apps Script after first v2.15 run
-// v2.15: bay_shows_merged is a plain Drive file fetched via Drive API v3 with OAuth token.
-// drive.google.com/uc?export=download does not include CORS headers and fails in fetch().
-// Drive API v3 (?alt=media) is CORS-friendly and works with the existing OAuth token.
-const DRIVE_API_URL = `https://www.googleapis.com/drive/v3/files/${DRIVE_DOC_ID}?alt=media`;
+// v2.15: bay_shows_merged is served by an Apps Script Web App (doGet).
+// Deploy the script as a Web App (Execute as: Me, Access: Anyone) and paste the URL below.
+// No OAuth required to load events — sign-in is only for prefs/tags cloud sync.
+const WEB_APP_URL  = 'https://script.google.com/macros/s/AKfycbxLSoBZ5I7qiAIL_vJ7WtMueB-y7tXZ5cq2TF4YK40_c_mJ8Mw1xEje-aRL96M54KcfiQ/exec';  // ← paste Apps Script Web App URL here after deploying
 const CACHE_KEY    = 'bay-events-cache-v1';
 const TAGS_KEY     = 'bay-events-tags-v9';
 const SNAP_KEY     = 'bay-events-snap-v9';
@@ -77,9 +76,7 @@ const DJ_OVERRIDE_KEY = 'bay-dj-override-v1'; // { [eventId]: 'live'|'dj' }
 const TTL_MS       = 6 * 60 * 60 * 1000;
 
 const GOOG_CLIENT_ID  = '1030489561991-kbu11qmn3o58ahu69d27f3g09qhai1ns.apps.googleusercontent.com';
-// drive.readonly: read bay_shows_merged (created by Apps Script, not this app).
-// drive.file: read/write user's prefs and tags files (created by this app).
-const GOOG_SCOPE      = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';
+const GOOG_SCOPE      = 'https://www.googleapis.com/auth/drive.file';
 const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
 const GOOG_PREFS_FILE = 'bay_shows_prefs.json';
 const GOOG_TAGS_FILE  = 'bay_shows_tags.json';
@@ -396,39 +393,19 @@ function midpointMins(event) {
 }
 
 // ── Data fetch ────────────────────────────────────────────────────
-// v2.15: bay_shows_merged is a plain Drive file. Fetched via Drive API v3 (?alt=media)
-// with OAuth bearer token — the only CORS-friendly path for Drive files.
-// drive.google.com/uc?export=download lacks CORS headers and fails in fetch().
-// If no token is stored the user is prompted to sign in; stale cache is shown meanwhile.
-async function fetchEvents(forceToken) {
+// ── Data fetch ────────────────────────────────────────────────────
+// v2.15: events are served by an Apps Script Web App (doGet) which reads
+// bay_shows_merged and returns it with CORS headers. No OAuth required —
+// the Web App runs as the script owner and is publicly accessible.
+// Google sign-in is only for prefs/tags cloud sync.
+async function fetchEvents() {
   const cached = lsGet(CACHE_KEY);
-  if (!forceToken && cached && cached.ts && Date.now() - cached.ts < TTL_MS && Array.isArray(cached.events)) {
+  if (cached && cached.ts && Date.now() - cached.ts < TTL_MS && Array.isArray(cached.events)) {
     return { events: cached.events, meta: cached.meta || null, artistLinks: cached.artistLinks || {}, fromCache: true, ts: cached.ts };
   }
-
-  // Require an OAuth token — Drive API v3 won't serve the file without auth
-  let tok = getStoredToken();
-  if (!tok) {
-    // No token: return stale cache if available, signal that sign-in is needed
-    if (cached && Array.isArray(cached.events)) {
-      return { events: cached.events, meta: cached.meta || null, artistLinks: cached.artistLinks || {}, fromCache: true, ts: cached.ts, needsAuth: true };
-    }
-    throw new Error('Sign in with Google (☁) to load events');
-  }
-
-  const resp = await fetch(DRIVE_API_URL, {
-    headers: { Authorization: `Bearer ${tok.access_token}` }
-  });
-  if (resp.status === 401) {
-    // Token expired mid-session — clear it and signal re-auth needed
-    lsSet(GDRIVE_AUTH_KEY, null);
-    if (cached && Array.isArray(cached.events)) {
-      return { events: cached.events, meta: cached.meta || null, artistLinks: cached.artistLinks || {}, fromCache: true, ts: cached.ts, needsAuth: true };
-    }
-    throw new Error('Session expired — sign in again (☁)');
-  }
+  if (!WEB_APP_URL) throw new Error('WEB_APP_URL not configured in index.html');
+  const resp = await fetch(WEB_APP_URL);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
   const text = await resp.text();
   const trimmed = text.replace(/^\uFEFF/, '').trim();
   let events, meta = null, artistLinks = {};
@@ -436,13 +413,14 @@ async function fetchEvents(forceToken) {
   if (objStart !== -1) {
     try {
       const parsed = JSON.parse(trimmed.slice(objStart));
+      if (parsed.error) throw new Error('Web App error: ' + parsed.error);
       if (parsed._meta && Array.isArray(parsed.events)) { meta = parsed._meta; events = parsed.events; artistLinks = parsed.artistLinks || {}; }
-    } catch {}
+    } catch(e) { if (String(e.message).startsWith('Web App')) throw e; }
   }
   if (!events) {
     const arrStart = trimmed.indexOf('[');
     const arrEnd = trimmed.lastIndexOf(']');
-    if (arrStart === -1 || arrEnd === -1) throw new Error('No JSON found in Drive file');
+    if (arrStart === -1 || arrEnd === -1) throw new Error('No JSON found in Web App response');
     events = JSON.parse(trimmed.slice(arrStart, arrEnd + 1));
   }
   const ts = Date.now();
@@ -940,8 +918,6 @@ function App() {
         await driveWrite(token, GOOG_TAGS_FILE, localTags);
         setDriveSyncMsg(`Signed in · ${Object.keys(localTags).length} shows backed up`);
       }
-      // If events weren't loaded yet (first sign-in, no cache), reload now that we have a token
-      if (events.length === 0) { setError(null); load(false); }
     } catch (e) { setDriveSyncMsg('Sync error: ' + e.message); }
     finally { setDriveSyncing(false); setTimeout(() => setDriveSyncMsg(''), 6000); }
   }, [prefs]);
@@ -990,7 +966,7 @@ function App() {
     if (force) { lsSet(CACHE_KEY, null); setRefreshing(true); }
     setError(null);
     try {
-      const { events: fetched, meta, artistLinks: fetchedLinks, fromCache, ts, needsAuth } = await fetchEvents(force);
+      const { events: fetched, meta, artistLinks: fetchedLinks, fromCache, ts } = await fetchEvents();
       if (!snapRef.current) {
         const snap = lsGet(SNAP_KEY, null);
         if (!snap) {
@@ -1007,8 +983,6 @@ function App() {
       const tmrwStr = `${tmrw.getFullYear()}-${pad(tmrw.getMonth()+1)}-${pad(tmrw.getDate())}`;
       setExpandedDays(new Set([t, tmrwStr]));
       setCacheInfo({ fromCache, ts, meta });
-      // Surface auth prompt if token missing but we got stale cache
-      if (needsAuth) setError('Sign in with Google (☁) to refresh events');
     } catch (err) {
       setError(err.message);
       const stale = lsGet(CACHE_KEY);
