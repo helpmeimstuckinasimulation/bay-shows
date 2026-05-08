@@ -61,8 +61,11 @@ const {
 } = React;
 
 // ── Constants ────────────────────────────────────────────────────
-const DRIVE_DOC_ID = '1ZHQNQrzEoplAN93saAxhEtd-JBAaavGvmdBbYNYMu78';
-const DRIVE_URL    = `https://docs.google.com/document/d/${DRIVE_DOC_ID}/export?format=txt`;
+const DRIVE_DOC_ID = '160iuE4fuqAczaxIYZuCQKK8NE2JGN4oX'; // ← UPDATE: paste OUTPUT_FILE_ID from Apps Script after first v2.15 run
+// v2.15: bay_shows_merged is now a plain Drive file (not a Google Doc).
+// Use the Drive download URL instead of the Docs export URL.
+// File must be shared as "Anyone with the link can view" in Drive.
+const DRIVE_URL    = `https://drive.google.com/uc?export=download&id=${DRIVE_DOC_ID}`;
 const CACHE_KEY    = 'bay-events-cache-v1';
 const TAGS_KEY     = 'bay-events-tags-v9';
 const SNAP_KEY     = 'bay-events-snap-v9';
@@ -391,6 +394,8 @@ function midpointMins(event) {
 }
 
 // ── Data fetch ────────────────────────────────────────────────────
+// v2.15: bay_shows_merged is now a plain Drive file fetched via drive.google.com/uc?export=download.
+// The response is raw JSON (not wrapped in Docs export text). Parse directly.
 async function fetchEvents() {
   const cached = lsGet(CACHE_KEY);
   if (cached && cached.ts && Date.now() - cached.ts < TTL_MS && Array.isArray(cached.events)) {
@@ -399,7 +404,8 @@ async function fetchEvents() {
   const resp = await fetch(DRIVE_URL);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const text = await resp.text();
-  const trimmed = text.replace(/^\uFEFF/, '').replace(/[\r\n]/g, '').trim();
+  // Strip BOM and whitespace (defensive — Drive files shouldn't have them)
+  const trimmed = text.replace(/^\uFEFF/, '').trim();
   let events, meta = null, artistLinks = {};
   const objStart = trimmed.indexOf('{');
   if (objStart !== -1) {
@@ -411,7 +417,7 @@ async function fetchEvents() {
   if (!events) {
     const arrStart = trimmed.indexOf('[');
     const arrEnd = trimmed.lastIndexOf(']');
-    if (arrStart === -1 || arrEnd === -1) throw new Error('No JSON found in document');
+    if (arrStart === -1 || arrEnd === -1) throw new Error('No JSON found in Drive file');
     events = JSON.parse(trimmed.slice(arrStart, arrEnd + 1));
   }
   const ts = Date.now();
