@@ -54,20 +54,12 @@ event.respondWith(fetch(event.request));
 return;
 }
 
-// Drive data URL — network first, cache on success
-// v2.15: bay_shows_merged is a plain Drive file — match drive.google.com/uc?export=download
-if (url.hostname === 'drive.google.com' && url.searchParams.get('export') === 'download') {
-event.respondWith(
-fetch(event.request)
-.then((response) => {
-if (response.ok) {
-const clone = response.clone();
-caches.open(DATA_CACHE).then((cache) => cache.put(event.request, clone));
-}
-return response;
-})
-.catch(() => caches.match(event.request))
-);
+// Drive API v3 data fetch — network only, never cache.
+// Requests carry an Authorization header so they can't be cached by the SW
+// (cached responses would be served without the header and return 401).
+// The app caches parsed event data in localStorage (TTL 6h) instead.
+if (url.hostname === 'www.googleapis.com' && url.pathname.includes('/drive/v3/files/')) {
+event.respondWith(fetch(event.request));
 return;
 }
 
