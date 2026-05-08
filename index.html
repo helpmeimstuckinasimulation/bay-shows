@@ -48,6 +48,7 @@
 <body>
   <div id="root"></div>
 
+  <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
@@ -94,6 +95,45 @@ const getStoredToken = () => {
   if (!t || !t.access_token) return null;
   if (t.expires_at && Date.now() > t.expires_at - 60000) return null;
   return t;
+};
+
+// Attempt silent token refresh via GIS (no popup, uses existing consent).
+// Resolves with access_token string, rejects if user hasn't consented yet
+// or if GIS isn't loaded yet (e.g. slow network).
+const refreshTokenSilently = () => new Promise((resolve, reject) => {
+  if (!window.google || !window.google.accounts) {
+    reject(new Error('GIS not loaded'));
+    return;
+  }
+  const client = window.google.accounts.oauth2.initTokenClient({
+    client_id: GOOG_CLIENT_ID,
+    scope: GOOG_SCOPE,
+    prompt: '',          // empty = silent re-auth, no popup shown
+    callback: (resp) => {
+      if (resp.error) { reject(new Error(resp.error)); return; }
+      const tokenData = {
+        access_token: resp.access_token,
+        expires_at: Date.now() + (resp.expires_in * 1000)
+      };
+      lsSet(GDRIVE_AUTH_KEY, tokenData);
+      resolve(resp.access_token);
+    }
+  });
+  client.requestAccessToken();
+});
+
+// Get a valid token: use stored if fresh, try silent refresh if we've
+// previously signed in, otherwise fall back to full interactive auth tab.
+const getOrRefreshToken = async (openTabFallback = false) => {
+  const stored = getStoredToken();
+  if (stored) return stored.access_token;
+  // If we have a stale record at all, the user consented before — try silent
+  const stale = lsGet(GDRIVE_AUTH_KEY, null);
+  if (stale && stale.access_token) {
+    try { return await refreshTokenSilently(); } catch {}
+  }
+  if (openTabFallback) return openAuthTab();
+  return null;
 };
 
 const openAuthTab = () => new Promise((resolve, reject) => {
@@ -890,9 +930,9 @@ function App() {
   const _debouncedTagWrite = useRef(null);
   if (!_debouncedTagWrite.current) {
     _debouncedTagWrite.current = debounce(async (tagObj) => {
-      const tok = getStoredToken();
+      const tok = await getOrRefreshToken();
       if (!tok) return;
-      try { await driveWrite(tok.access_token, GOOG_TAGS_FILE, tagObj); } catch {}
+      try { await driveWrite(tok, GOOG_TAGS_FILE, tagObj); } catch {}
     }, 600);
   }
 
@@ -923,11 +963,11 @@ function App() {
   }, [prefs]);
 
   useEffect(() => {
-    const stored = getStoredToken();
-    if (stored) {
-      fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${stored.access_token}` } })
+    getOrRefreshToken().then(tok => {
+      if (!tok) return;
+      fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${tok}` } })
         .then(r => r.json()).then(u => { if (u.email) setDriveUser({ email: u.email }); }).catch(() => {});
-    }
+    });
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
@@ -945,15 +985,15 @@ function App() {
   }, [runDriveSync]);
 
   const reSyncDrive = useCallback(async () => {
-    const tok = getStoredToken();
-    if (tok) { runDriveSync(tok.access_token); return; }
+    const tok = await getOrRefreshToken();
+    if (tok) { runDriveSync(tok); return; }
     signInWithGoogle();
   }, [runDriveSync, signInWithGoogle]);
 
   const syncPrefsToDrive = useCallback(async (newPrefs) => {
-    const tok = getStoredToken();
+    const tok = await getOrRefreshToken();
     if (!tok) return;
-    try { await driveWrite(tok.access_token, GOOG_PREFS_FILE, newPrefs); } catch {}
+    try { await driveWrite(tok, GOOG_PREFS_FILE, newPrefs); } catch {}
   }, []);
 
   const snapRef = useRef(false);
