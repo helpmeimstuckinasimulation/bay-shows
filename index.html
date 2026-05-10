@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -49,7 +50,9 @@
   <div id="root"></div>
 
   <script src="https://accounts.google.com/gsi/client" async></script>
+
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
   <script>
@@ -316,148 +319,120 @@ function classifyDJ(event, djOverrides) {
 // ── Time / end-time inference ─────────────────────────────────────
 const pad = n => String(n).padStart(2, '0');
 
-// Parse a time string → minutes since midnight, or null.
-// Handles all formats seen in riotlist/19hz data:
-//   bare hour:   "8pm", "9am", "12pm"
-//   with mins:   "8:00pm", "9:30pm", "8:00 PM", "7:30 PM"
-//   24-hr:       "20:00", "19:30"
+// Parse "HH:MM" or "H:MM" → minutes since midnight, or null
 function parseTimeStr(t) {
   if (!t) return null;
-  const s = String(t).trim().toLowerCase();
-  // Bare hour + am/pm: "8pm", "12am"
-  const bare = s.match(/^(\d{1,2})(am|pm)$/);
-  if (bare) {
-    let h = parseInt(bare[1]);
-    const isPM = bare[2] === 'pm';
-    if (h === 12) h = isPM ? 12 : 0;
-    else if (isPM) h += 12;
-    return h * 60;
-  }
-  // Hour:min + am/pm (optional space): "8:00pm", "9:30 PM"
-  const hm12 = s.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/);
-  if (hm12) {
-    let h = parseInt(hm12[1]);
-    const m = parseInt(hm12[2]);
-    const isPM = hm12[3] === 'pm';
-    if (h === 12) h = isPM ? 12 : 0;
-    else if (isPM) h += 12;
-    return h * 60 + m;
-  }
-  // 24-hr: "20:00", "8:00"
-  const hm24 = s.match(/^(\d{1,2}):(\d{2})/);
-  if (hm24) return parseInt(hm24[1]) * 60 + parseInt(hm24[2]);
-  return null;
+  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return parseInt(m[1]) * 60 + parseInt(m[2]);
 }
 
-// Format minutes since midnight → "h:MM AM/PM"
-function minsToDisplay(mins) {
-  const total = ((mins % 1440) + 1440) % 1440;
-  const h24 = Math.floor(total / 60);
-  const m   = total % 60;
-  const ampm = h24 < 12 ? 'AM' : 'PM';
-  const h12  = h24 % 12 || 12;
-  return `${h12}:${pad(m)} ${ampm}`;
-}
-
-// Legacy 24-hr formatter (still referenced in a couple spots)
+// Format minutes since midnight → "HH:MM"
 function minsToStr(mins) {
   const h = Math.floor(mins / 60) % 24;
   const m = mins % 60;
   return `${pad(h)}:${pad(m)}`;
 }
 
-// Is date string a Fri or Sat?
+// Is date string a weekend day (Fri or Sat night = Fri/Sat/Sun morning)?
 function isWeekendDate(dateStr) {
   const [y, mo, d] = dateStr.split('-').map(Number);
   const dow = new Date(y, mo - 1, d).getDay();
-  return dow === 5 || dow === 6;
+  return dow === 5 || dow === 6; // Fri or Sat
 }
 
-// Infer end time from start time, artist count, event type.
-// Returns minutes since midnight (may exceed 1440 for next-day).
-//   DJ sets:           4 hr weekday / 5 hr weekend
-//   Morning  (<12):    45 min/act, cap 2.5 hr
-//   Matinee (12–17):   50 min/act, cap 3 hr
-//   Evening (17–21):   60 min/act + 30 min buffer, cap 3.5 hr / 4 hr weekend
-//   Night   (21+):     60 min/act, cap 4 hr / 5 hr weekend
+// Infer end time from start time, artist count, event type
+// Returns minutes since midnight (may exceed 1440 for next-day)
 function inferEndMins(startMins, event) {
-  const numActs = Math.max(artistArray(event.a).length, 1);
+  const numActs = artistArray(event.a).length || 1;
   const isWeekend = isWeekendDate(event.d);
   const isDJ = event._isDJ;
-  if (isDJ) return startMins + (isWeekend ? 5 * 60 : 4 * 60);
-  const h = Math.floor(startMins / 60) % 24;
-  if (h < 12) return startMins + Math.min(numActs * 45, 150);
-  if (h < 17) return startMins + Math.min(numActs * 50, 180);
-  if (h < 21) return startMins + Math.min(numActs * 60 + 30, isWeekend ? 240 : 210);
-  return startMins + Math.min(numActs * 60, isWeekend ? 300 : 240);
-}
 
-// Return resolved time details for an event:
-//   startMins    — effective start (show time if present, else doors, else 19:00 default)
-//   endMins      — end time (explicit or inferred; may exceed 1440)
-//   doorsMins    — parsed doors time, or null
-//   showMins     — parsed show-start time, or null
-//   endExplicit  — true if end came from data field
-//   hasTime      — false only when no time info at all was present
-function eventTimings(event) {
-  const showMins  = parseTimeStr(event.t_show  || null);
-  const doorsMins = parseTimeStr(event.t_doors || event.t || null);
-  const endParsed = parseTimeStr(event.te || null);
-
-  const startMins = showMins !== null  ? showMins
-                  : doorsMins !== null ? doorsMins
-                  : 19 * 60;
-  const hasTime = showMins !== null || doorsMins !== null;
-
-  let endMins, endExplicit;
-  if (endParsed !== null) {
-    endMins = (endParsed <= startMins) ? endParsed + 1440 : endParsed;
-    endExplicit = true;
-  } else {
-    endMins = inferEndMins(startMins, event);
-    endExplicit = false;
+  if (isDJ) {
+    // DJ sets: nights go long
+    return startMins + (isWeekend ? 5 * 60 : 4 * 60);
   }
-  return { startMins, endMins, doorsMins, showMins, endExplicit, hasTime };
+
+  // Live shows: ~45-60min per act + opener padding
+  // Matinee/afternoon: shorter; night: standard
+  if (startMins < 12 * 60) {
+    // Matinee
+    return startMins + Math.min(numActs * 50, 150);
+  } else if (startMins < 17 * 60) {
+    // Afternoon
+    return startMins + Math.min(numActs * 55, 180);
+  } else if (startMins < 21 * 60) {
+    // Evening (before 9pm)
+    const base = isWeekend ? 4 * 60 : 3 * 60;
+    return startMins + Math.min(numActs * 60 + 30, base);
+  } else {
+    // Late night (9pm+)
+    return startMins + (isWeekend ? 5 * 60 : 4 * 60);
+  }
 }
 
-// Backwards-compat shim used by hasEnded / midpointMins / timeBucket
+// Determine effective start minutes (defaulting no-time to 19:00)
 function effectiveStartMins(event) {
-  return eventTimings(event).startMins;
+  const t = event.t_show || event.t;
+  const parsed = parseTimeStr(t);
+  return parsed !== null ? parsed : 19 * 60; // 7pm default for unknown
 }
 
-// Time bucket: morning 6–11:59 / matinee 12–16:59 / evening 17–20:59 / night 21+
+// Time bucket based on effective start time
+// The old bug: events starting after midnight (e.g. 00:30) got bucket by raw clock hour
+// Fix: any show with no time defaults to evening; midnight+ shows are "night"
 function timeBucket(event) {
-  const h = Math.floor(effectiveStartMins(event) / 60) % 24;
-  if (h >= 6 && h < 12) return 'morning';
-  if (h >= 12 && h < 17) return 'matinee';
+  const mins = effectiveStartMins(event);
+  // Normalise to 0-1439 for bucket purposes
+  const h = Math.floor(mins / 60) % 24;
+  if (h >= 6 && h < 12) return 'matinee';
+  if (h >= 12 && h < 17) return 'afternoon';
   if (h >= 17 && h < 21) return 'evening';
-  return 'night';
+  return 'night'; // 21:00+ OR 00:00-05:59
 }
 
 const timeBucketLabel = {
-  'morning': '🌅 Morning',
-  'matinee': '☀️ Matinee',
-  'evening': '🌆 Evening',
-  'night':   '🌙 Night',
+  'matinee':   '☀ Matinee',
+  'afternoon': '🌤 Afternoon',
+  'evening':   '🌆 Evening',
+  'night':     '🌙 Night'
 };
-const TB_ORDER = ['morning', 'matinee', 'evening', 'night'];
+const TB_ORDER = ['matinee', 'afternoon', 'evening', 'night'];
 
-// Has this event ended?
+// Has this event ended? (use inferred end time if no explicit end)
 function hasEnded(event) {
   const now = new Date();
   const nowMins = now.getHours() * 60 + now.getMinutes();
   const todayStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
-  if (event.d > todayStr) return false;
-  if (event.d < todayStr) return true;
-  const { endMins } = eventTimings(event);
-  if (endMins >= 1440) return false;
+
+  if (event.d > todayStr) return false; // future date
+  if (event.d < todayStr) return true;  // past date
+
+  // Same day — check time
+  const startMins = effectiveStartMins(event);
+  const explicitEnd = parseTimeStr(event.te);
+  let endMins;
+  if (explicitEnd !== null) {
+    // If explicit end looks earlier than start, it wraps midnight
+    endMins = explicitEnd <= startMins ? explicitEnd + 1440 : explicitEnd;
+  } else {
+    endMins = inferEndMins(startMins, event);
+  }
+
+  // Normalise for comparison (today's clock vs today's event window)
+  if (endMins >= 1440) {
+    // Ends after midnight — not ended unless nowMins is past (endMins % 1440) tomorrow
+    // Simplification: if it's still "today" and end would be tomorrow, not ended
+    return false;
+  }
   return nowMins > endMins;
 }
 
-// Sort key: midpoint of start + end
+// Sort key: midpoint of start + inferred end
 function midpointMins(event) {
-  const { startMins, endMins } = eventTimings(event);
-  return (startMins + endMins) / 2;
+  const start = effectiveStartMins(event);
+  const end = inferEndMins(start, event);
+  return (start + end) / 2;
 }
 
 // ── Data fetch ────────────────────────────────────────────────────
@@ -594,7 +569,7 @@ const S = {
   installBanner: { padding: '10px 16px', background: 'var(--bg3)', borderBottom: '1px solid var(--border)', fontSize: '11px', color: 'var(--text2)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 },
   searchBar: { padding: '7px 16px', borderBottom: '1px solid var(--border2)', background: 'var(--bg)', flexShrink: 0 },
   searchInput: { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '20px', color: 'var(--text)', fontSize: '12px', padding: '5px 12px', outline: 'none', fontFamily: 'var(--mono)' },
-  moreFiltersPanel: { background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '6px', margin: '0 12px 8px', padding: '12px', flexShrink: 0 },
+  moreFiltersPanel: { position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 200, background: 'var(--bg2)', borderRadius: '14px 14px 0 0', border: '1px solid var(--border)', borderBottom: 'none', padding: '16px 16px calc(16px + var(--safe-bottom))', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 -4px 32px rgba(0,0,0,0.5)' },
   jumpLinks: { display: 'flex', gap: '8px', marginLeft: 'auto' },
   jumpLink: { fontSize: '9px', color: 'var(--text3)', cursor: 'pointer', letterSpacing: '0.05em', textDecoration: 'underline', textDecorationColor: 'var(--border)', padding: '2px 0' },
 };
@@ -655,21 +630,8 @@ function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTa
             style: S.venueLink,
             onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
           }, event.v),
-          (() => {
-            const { startMins, endMins, doorsMins, showMins, endExplicit, hasTime } = eventTimings(event);
-            const parts = [];
-            if (doorsMins !== null && showMins !== null && doorsMins !== showMins) {
-              parts.push(`doors ${minsToDisplay(doorsMins)}`);
-            }
-            if (hasTime) {
-              const label = (doorsMins !== null && showMins !== null && doorsMins !== showMins)
-                ? `show ${minsToDisplay(showMins)}`
-                : minsToDisplay(startMins);
-              parts.push(label);
-            }
-            parts.push(`ends ${minsToDisplay(endMins)}${endExplicit ? '' : ' (est.)'}`);
-            return React.createElement("span", { style: { color: 'var(--text3)' } }, '· ', parts.join(' · '));
-          })(),
+          event.t && React.createElement("span", { style: { color: 'var(--text3)' } }, '· ', event.t),
+          event.te && React.createElement("span", { style: { color: 'var(--text3)' } }, '–', event.te),
           event.r && React.createElement("span", { style: { color: 'var(--text3)' } }, '· ', fmtRegion(event.r))
         )
       ),
@@ -847,10 +809,10 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
     return `${h % 12 || 12}:${pad(min)} ${h < 12 ? 'AM' : 'PM'}`;
   };
 
-  const fmtDateStr = ds => {
+  const fmtSinceDate = ds => {
     if (!ds) return '';
     const [y, m, d] = ds.split('-').map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+    return new Date(y, m - 1, d).toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
   const recencyActive = w => {
@@ -867,137 +829,141 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
   };
 
   const Row = ({ label, field, desc }) =>
-    React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border2)' } },
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border2)' } },
       React.createElement("div", null,
-        React.createElement("div", { style: { fontSize: '11px', color: 'var(--text)' } }, label),
-        desc && React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', marginTop: '1px' } }, desc)
+        React.createElement("div", { style: { fontSize: '12px', color: 'var(--text)' } }, label),
+        desc && React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', marginTop: '2px' } }, desc)
       ),
       React.createElement("button", {
-        style: { ...S.filterChip(local[field]), flexShrink: 0 },
+        style: { ...S.filterChip(local[field]), flexShrink: 0, fontSize: '11px', padding: '4px 12px' },
         onClick: () => toggle(field)
       }, local[field] ? 'ON' : 'OFF')
     );
 
   const chip = active => ({
-    fontSize: '10px', padding: '4px 10px', borderRadius: '20px', cursor: 'pointer',
+    fontSize: '11px', padding: '5px 12px', borderRadius: '20px', cursor: 'pointer',
     border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
     color: active ? 'var(--bg)' : 'var(--text2)',
     background: active ? 'var(--accent)' : 'transparent',
     whiteSpace: 'nowrap', letterSpacing: '0.04em', transition: 'all 0.12s',
   });
 
-  const modeLabel = (key, label) => React.createElement("span", {
-    style: {
-      fontSize: '10px', letterSpacing: '0.06em', cursor: 'pointer',
-      color: local.recencyMode === key ? 'var(--accent)' : 'var(--text3)',
-      fontWeight: local.recencyMode === key ? 700 : 400,
-      textDecoration: local.recencyMode === key ? 'underline' : 'none',
-      textDecorationStyle: 'dotted',
-    },
-    onClick: () => setLocal(p => ({ ...p, recencyMode: key }))
-  }, label);
-
   const bucketDefs = [
     ['morning', '🌅 Morning', '6 AM–Noon'],
     ['matinee', '☀️ Matinee', 'Noon–5 PM'],
-    ['evening', '🌆 Evening', '5–9 PM'],
-    ['night',   '🌙 Night',   '9 PM+'],
+    ['evening', '🌆 Evening',  '5–9 PM'],
+    ['night',   '🌙 Night',    '9 PM+'],
   ];
 
-  return React.createElement("div", { className: 'more-panel', style: S.moreFiltersPanel },
-    React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '10px' } }, "MORE FILTERS"),
+  const sectionHead = txt => React.createElement("div", {
+    style: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px', marginTop: '4px' }
+  }, txt);
 
-    // ── Recency filter ──
-    React.createElement("div", { style: { paddingBottom: '10px', borderBottom: '1px solid var(--border2)', marginBottom: '4px' } },
-      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' } },
-        modeLabel('da', 'DATE ADDED'),
-        React.createElement("span", { style: { fontSize: '9px', color: 'var(--text3)' } }, "/"),
-        modeLabel('dm', 'DATE MODIFIED'),
+  const divider = React.createElement("div", { style: { borderTop: '1px solid var(--border2)', margin: '10px 0' } });
+
+  return React.createElement("div", { className: 'more-panel', style: S.moreFiltersPanel, onClick: e => e.stopPropagation() },
+
+    // drag handle
+    React.createElement("div", { style: { width: '36px', height: '4px', borderRadius: '2px', background: 'var(--border)', margin: '0 auto 14px' } }),
+
+    // ── Recency ──
+    sectionHead('RECENCY'),
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' } },
+      React.createElement("span", {
+        style: { fontSize: '11px', cursor: 'pointer', fontWeight: local.recencyMode === 'da' ? 700 : 400,
+          color: local.recencyMode === 'da' ? 'var(--accent)' : 'var(--text3)',
+          textDecoration: local.recencyMode === 'da' ? 'underline' : 'none', textDecorationStyle: 'dotted' },
+        onClick: () => setLocal(p => ({ ...p, recencyMode: 'da' }))
+      }, "date added"),
+      React.createElement("span", { style: { color: 'var(--text3)', fontSize: '10px' } }, "/"),
+      React.createElement("span", {
+        style: { fontSize: '11px', cursor: 'pointer', fontWeight: local.recencyMode === 'dm' ? 700 : 400,
+          color: local.recencyMode === 'dm' ? 'var(--accent)' : 'var(--text3)',
+          textDecoration: local.recencyMode === 'dm' ? 'underline' : 'none', textDecorationStyle: 'dotted' },
+        onClick: () => setLocal(p => ({ ...p, recencyMode: 'dm' }))
+      }, "date modified"),
+    ),
+    React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' } },
+      React.createElement("button", { style: chip(recencyActive('1d')), onClick: () => setRecency('1d') }, "today"),
+      React.createElement("button", { style: chip(recencyActive('7d')), onClick: () => setRecency('7d') }, "past week"),
+      React.createElement("button", {
+        style: { ...chip(recencyActive('since')), display: 'inline-flex', gap: '4px', alignItems: 'center' },
+        onClick: () => setRecency('since')
+      },
+        "since",
+        recencyActive('since')
+          ? React.createElement("strong", { style: { color: 'var(--accent)' } }, fmtSinceDate(local.recencyWindow && local.recencyWindow.since))
+          : React.createElement("span", { style: { borderBottom: '1px solid currentColor', opacity: 0.5, minWidth: '28px', textAlign: 'center' } }, "···")
       ),
-      React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
-        React.createElement("button", { style: chip(recencyActive('1d')), onClick: () => setRecency('1d') }, "today"),
-        React.createElement("button", { style: chip(recencyActive('7d')), onClick: () => setRecency('7d') }, "past week"),
-        React.createElement("button", {
-          style: { ...chip(recencyActive('since')), display: 'flex', gap: '4px', alignItems: 'center' },
-          onClick: () => setRecency('since')
+    ),
+    recencyActive('since') && React.createElement("input", {
+      type: 'date',
+      value: (local.recencyWindow && local.recencyWindow.since) || todayStr(),
+      max: todayStr(),
+      style: { display: 'block', marginBottom: '8px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '13px', padding: '6px 10px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%' },
+      onChange: e => setLocal(p => ({ ...p, recencyWindow: { since: e.target.value } }))
+    }),
+    local.recencyWindow && React.createElement("button", {
+      style: { fontSize: '10px', color: 'var(--text3)', textDecoration: 'underline', marginBottom: '4px', display: 'block' },
+      onClick: () => setLocal(p => ({ ...p, recencyWindow: null }))
+    }, "clear"),
+
+    divider,
+
+    // ── Time of day ──
+    sectionHead('TIME OF DAY'),
+    React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' } },
+      bucketDefs.map(([key, label, sub]) => {
+        const active = (local.timeBuckets || []).includes(key);
+        return React.createElement("button", {
+          key,
+          style: { ...chip(active), display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px', padding: '6px 12px', lineHeight: 1.25 },
+          onClick: () => toggleBucket(key)
         },
-          React.createElement("span", null, "since"),
-          recencyActive('since')
-            ? React.createElement("span", { style: { color: 'var(--accent)', fontWeight: 700 } },
-                fmtDateStr(local.recencyWindow && local.recencyWindow.since))
-            : React.createElement("span", { style: { borderBottom: '1px solid var(--text3)', color: 'var(--text3)', minWidth: '28px', textAlign: 'center' } }, "···")
-        ),
-      ),
-      recencyActive('since') && React.createElement("input", {
-        type: 'date',
-        value: (local.recencyWindow && local.recencyWindow.since) || todayStr(),
-        max: todayStr(),
-        style: { marginTop: '8px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '12px', padding: '5px 8px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', display: 'block' },
-        onChange: e => setLocal(p => ({ ...p, recencyWindow: { since: e.target.value } }))
-      }),
-      local.recencyWindow && React.createElement("button", {
-        style: { fontSize: '9px', color: 'var(--text3)', marginTop: '6px', display: 'block', textDecoration: 'underline' },
-        onClick: () => setLocal(p => ({ ...p, recencyWindow: null }))
-      }, "clear")
+          React.createElement("span", null, label),
+          React.createElement("span", { style: { fontSize: '9px', opacity: 0.7 } }, sub)
+        );
+      })
+    ),
+    (local.timeBuckets || []).length > 0 && React.createElement("button", {
+      style: { fontSize: '10px', color: 'var(--text3)', textDecoration: 'underline', marginBottom: '4px', display: 'block' },
+      onClick: () => setLocal(p => ({ ...p, timeBuckets: [] }))
+    }, "clear"),
+
+    divider,
+
+    // ── Time range sliders ──
+    sectionHead('START TIME'),
+    React.createElement("div", { style: { display: 'flex', justifyContent: 'flex-end', fontSize: '11px', color: 'var(--accent)', marginBottom: '4px' } },
+      local.timeRange[0] > 0 ? `from ${minLabel(local.timeRange[0])}` : 'any'
+    ),
+    React.createElement("input", {
+      type: 'range', min: 0, max: 1439, step: 15, value: local.timeRange[0],
+      style: { width: '100%', accentColor: 'var(--accent)', marginBottom: '2px' },
+      onChange: e => { const v = parseInt(e.target.value); setLocal(p => ({ ...p, timeRange: [v, Math.max(v + 30, p.timeRange[1])] })); }
+    }),
+    React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text3)', marginBottom: '10px' } },
+      React.createElement("span", null, "12 AM"), React.createElement("span", null, "12 PM"), React.createElement("span", null, "11:45 PM")
     ),
 
-    // ── Time of day buckets ──
-    React.createElement("div", { style: { paddingBottom: '10px', borderBottom: '1px solid var(--border2)', marginBottom: '4px' } },
-      React.createElement("div", { style: { fontSize: '10px', color: 'var(--text2)', letterSpacing: '0.06em', marginBottom: '6px' } }, "TIME OF DAY"),
-      React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap' } },
-        bucketDefs.map(([key, label, sub]) => {
-          const active = (local.timeBuckets || []).includes(key);
-          return React.createElement("button", {
-            key,
-            style: { ...chip(active), display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px', padding: '5px 10px', lineHeight: 1.2 },
-            onClick: () => toggleBucket(key)
-          },
-            React.createElement("span", null, label),
-            React.createElement("span", { style: { fontSize: '8px', opacity: 0.75 } }, sub)
-          );
-        })
-      ),
-      (local.timeBuckets || []).length > 0 && React.createElement("button", {
-        style: { fontSize: '9px', color: 'var(--text3)', marginTop: '5px', textDecoration: 'underline' },
-        onClick: () => setLocal(p => ({ ...p, timeBuckets: [] }))
-      }, "clear")
+    sectionHead('END TIME'),
+    React.createElement("div", { style: { display: 'flex', justifyContent: 'flex-end', fontSize: '11px', color: 'var(--accent)', marginBottom: '4px' } },
+      local.timeRange[1] < 1439 ? `by ${minLabel(local.timeRange[1])}` : 'any'
     ),
-
-    // ── Start time slider ──
-    React.createElement("div", { style: { padding: '8px 0', borderBottom: '1px solid var(--border2)' } },
-      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text2)', marginBottom: '4px', letterSpacing: '0.06em' } },
-        React.createElement("span", null, "START TIME"),
-        React.createElement("span", { style: { color: 'var(--accent)' } }, local.timeRange[0] > 0 ? `from ${minLabel(local.timeRange[0])}` : "any")
-      ),
-      React.createElement("input", {
-        type: 'range', min: 0, max: 1439, step: 15, value: local.timeRange[0],
-        style: { width: '100%', accentColor: 'var(--accent)' },
-        onChange: e => { const v = parseInt(e.target.value); setLocal(p => ({ ...p, timeRange: [v, Math.max(v + 30, p.timeRange[1])] })); }
-      }),
-      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text3)', marginTop: '1px' } },
-        React.createElement("span", null, "12 AM"), React.createElement("span", null, "12 PM"), React.createElement("span", null, "11:45 PM")
-      )
-    ),
-
-    // ── End time slider ──
-    React.createElement("div", { style: { padding: '8px 0', borderBottom: '1px solid var(--border2)' } },
-      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text2)', marginBottom: '4px', letterSpacing: '0.06em' } },
-        React.createElement("span", null, "END TIME"),
-        React.createElement("span", { style: { color: 'var(--accent)' } }, local.timeRange[1] < 1439 ? `by ${minLabel(local.timeRange[1])}` : "any")
-      ),
-      React.createElement("input", {
-        type: 'range', min: 0, max: 1439, step: 15, value: local.timeRange[1],
-        style: { width: '100%', accentColor: 'var(--accent)' },
-        onChange: e => { const v = parseInt(e.target.value); setLocal(p => ({ ...p, timeRange: [Math.min(p.timeRange[0], v - 30), v] })); }
-      }),
-      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text3)', marginTop: '1px' } },
-        React.createElement("span", null, "12 AM"), React.createElement("span", null, "12 PM"), React.createElement("span", null, "11:45 PM")
-      )
+    React.createElement("input", {
+      type: 'range', min: 0, max: 1439, step: 15, value: local.timeRange[1],
+      style: { width: '100%', accentColor: 'var(--accent)', marginBottom: '2px' },
+      onChange: e => { const v = parseInt(e.target.value); setLocal(p => ({ ...p, timeRange: [Math.min(p.timeRange[0], v - 30), v] })); }
+    }),
+    React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text3)', marginBottom: (local.timeRange[0] > 0 || local.timeRange[1] < 1439) ? '4px' : '0' } },
+      React.createElement("span", null, "12 AM"), React.createElement("span", null, "12 PM"), React.createElement("span", null, "11:45 PM")
     ),
     (local.timeRange[0] > 0 || local.timeRange[1] < 1439) && React.createElement("button", {
-      style: { fontSize: '9px', color: 'var(--text3)', padding: '3px 0', textDecoration: 'underline' },
+      style: { fontSize: '10px', color: 'var(--text3)', textDecoration: 'underline', display: 'block', marginBottom: '4px' },
       onClick: () => setLocal(p => ({ ...p, timeRange: [0, 1439] }))
-    }, "reset time range"),
+    }, "reset"),
+
+    divider,
 
     // ── Boolean rows ──
     React.createElement(Row, { label: "Free only", field: "freeOnly" }),
@@ -1009,10 +975,18 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
     React.createElement(Row, { label: "Show DJ / club events", field: "showDJ", desc: "Hidden by default — 19hz DJ nights etc." }),
     React.createElement(Row, { label: "Live events only", field: "liveOnly", desc: "Exclude DJ / club events" }),
     React.createElement(Row, { label: "Hide recurring events", field: "hideRecurring", desc: "Filters out weekly/monthly club nights" }),
-    React.createElement(Row, { label: "Recurring events only", field: "recurringOnly", desc: "Show only regular series (useful to find DJ nights)" }),
-    React.createElement("div", { style: { display: 'flex', gap: '8px', marginTop: '12px' } },
-      React.createElement("button", { style: { ...S.btnPrimary, flex: 1, marginTop: 0 }, onClick: () => { savePrefs({ ...prefs, ...local }); onClose(); } }, "Save"),
-      React.createElement("button", { style: { ...S.btnSecondary, flex: 1, marginTop: 0 }, onClick: onClose }, "Cancel")
+    React.createElement(Row, { label: "Recurring events only", field: "recurringOnly", desc: "Show only regular series" }),
+
+    // ── Save / Cancel ──
+    React.createElement("div", { style: { display: 'flex', gap: '8px', marginTop: '16px' } },
+      React.createElement("button", {
+        style: { ...S.btnPrimary, flex: 1, marginTop: 0, fontSize: '13px', padding: '10px' },
+        onClick: () => { savePrefs({ ...prefs, ...local }); onClose(); }
+      }, "Save"),
+      React.createElement("button", {
+        style: { ...S.btnSecondary, flex: 1, marginTop: 0, fontSize: '13px', padding: '10px' },
+        onClick: onClose
+      }, "Cancel")
     )
   );
 }
@@ -1101,7 +1075,7 @@ function App() {
     hideRecurring: false,
     recurringOnly: false,
     timeBuckets: [],        // [] = no filter; subset of 'morning'|'matinee'|'evening'|'night'
-    timeRange: [0, 1439],   // [startMin, endMin] slider — mins since midnight
+    timeRange: [0, 1439],   // [startMin, endMin] — mins since midnight
     recencyMode: 'da',      // 'da' = date added, 'dm' = date modified
     recencyWindow: null,    // null | '1d' | '7d' | { since: 'YYYY-MM-DD' }
   };
@@ -1281,7 +1255,7 @@ function App() {
         const evSgs = Array.isArray(e.sg) ? e.sg : [e.sg || ''];
         if (!prefs.subgenres.some(sg => evSgs.some(s => s === sg || s.toLowerCase() === sg.toLowerCase()))) return false;
       }
-      // Time-of-day bucket filter (multi-select)
+      // Time-of-day bucket filter
       if (prefs.timeBuckets && prefs.timeBuckets.length > 0) {
         if (!prefs.timeBuckets.includes(timeBucket(e))) return false;
       }
@@ -1290,21 +1264,19 @@ function App() {
         const { startMins, endMins } = eventTimings(e);
         if (startMins > prefs.timeRange[1] || (endMins % 1440) < prefs.timeRange[0]) return false;
       }
-      // Recency filter (date added / date modified)
+      // Recency filter
       if (prefs.recencyWindow) {
-        const tsField = prefs.recencyMode === 'dm' ? e.dm : e.da;
-        if (!tsField) return false;
+        const ts = prefs.recencyMode === 'dm' ? e.dm : e.da;
+        if (!ts) return false;
         if (prefs.recencyWindow === '1d') {
-          const evDate = new Date(tsField), now = new Date();
-          if (evDate.getFullYear() !== now.getFullYear() ||
-              evDate.getMonth()    !== now.getMonth()    ||
-              evDate.getDate()     !== now.getDate()) return false;
+          const evD = new Date(ts), now = new Date();
+          if (evD.getFullYear() !== now.getFullYear() || evD.getMonth() !== now.getMonth() || evD.getDate() !== now.getDate()) return false;
         } else if (prefs.recencyWindow === '7d') {
           const cutoff = new Date(); cutoff.setHours(0,0,0,0); cutoff.setDate(cutoff.getDate() - 6);
-          if (tsField < cutoff.getTime()) return false;
+          if (ts < cutoff.getTime()) return false;
         } else if (prefs.recencyWindow && prefs.recencyWindow.since) {
           const [sy, sm, sd] = prefs.recencyWindow.since.split('-').map(Number);
-          if (tsField < new Date(sy, sm - 1, sd, 0, 0, 0, 0).getTime()) return false;
+          if (ts < new Date(sy, sm - 1, sd, 0, 0, 0, 0).getTime()) return false;
         }
       }
       // Search
@@ -1375,7 +1347,8 @@ function App() {
   };
 
   // Count active secondary filters for badge
-  const activeSecondaryCount = [prefs.freeOnly, prefs.allAgesOnly, prefs.showSaved, prefs.showTickets,
+  const activeSecondaryCount = [
+    prefs.freeOnly, prefs.allAgesOnly, prefs.showSaved, prefs.showTickets,
     prefs.showStarredNoTicket, prefs.showHidden, prefs.showDJ, prefs.liveOnly,
     prefs.hideRecurring, prefs.recurringOnly,
     prefs.timeBuckets && prefs.timeBuckets.length > 0,
@@ -1438,12 +1411,18 @@ function App() {
       })
     ),
 
-    // ── More Filters Panel ──
-    showMoreFilters && React.createElement(MoreFiltersPanel, {
-      prefs,
-      savePrefs,
-      onClose: () => setShowMoreFilters(false)
-    }),
+    // ── More Filters Panel (modal sheet) ──
+    showMoreFilters && React.createElement(React.Fragment, null,
+      React.createElement("div", {
+        style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 199, backdropFilter: 'blur(2px)' },
+        onClick: () => setShowMoreFilters(false)
+      }),
+      React.createElement(MoreFiltersPanel, {
+        prefs,
+        savePrefs,
+        onClose: () => setShowMoreFilters(false)
+      })
+    ),
 
     // ── Genre chips ──
     React.createElement("div", { style: S.filters, className: "filter-scroll" },
@@ -1600,5 +1579,6 @@ function App() {
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(React.createElement(App, null));
   </script>
+
 </body>
 </html>
