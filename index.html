@@ -601,62 +601,43 @@ function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTa
     className: 'card-hover',
     style: { ...S.card(rank), position: 'relative' }
   },
-    // Artist name row
-    React.createElement("div", { style: { display: 'flex', alignItems: 'flex-start', gap: '8px' } },
-      React.createElement("div", { style: { flex: 1 } },
-        // Artist names — each individually tappable
-        React.createElement("div", { style: S.artistName(rank) },
-          artists.length === 0
-            ? React.createElement("span", { style: S.artistLink, onClick: () => onVenueClick && onVenueClick(event.v) }, event.v)
-            : artists.map((artist, ai) =>
-                React.createElement(React.Fragment, { key: ai },
-                  ai > 0 && React.createElement("span", { style: { color: 'var(--text3)' } }, ' · '),
-                  React.createElement("span", {
-                    style: S.artistLink,
-                    onClick: (e) => { e.stopPropagation(); onArtistClick && onArtistClick(artist, event); }
-                  }, artist)
-                )
-              ),
-          newEvent && React.createElement("span", { style: { ...S.newBadge, marginLeft: '6px' } }, "NEW"),
-          tagged && React.createElement("span", { style: { ...S.tag('#e8ff47'), marginLeft: '6px' } }, "★"),
-          hasTicket && React.createElement("span", { style: { ...S.tag('var(--green)'), marginLeft: '6px' } }, "🎫"),
-          isDJ && React.createElement("span", { style: { ...S.djBadge, marginLeft: '6px' } }, "DJ"),
-          event.rec && React.createElement("span", { style: { ...S.tag('#888855'), marginLeft: '6px', fontSize: '9px' } }, "recurring")
-        ),
-        // Venue + time + region
-        React.createElement("div", { style: S.venueLine },
-          event.v && React.createElement("span", {
-            style: S.venueLink,
-            onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
-          }, event.v),
-          event.t && React.createElement("span", { style: { color: 'var(--text3)' } }, '· ', event.t),
-          event.te && React.createElement("span", { style: { color: 'var(--text3)' } }, '–', event.te),
-          event.r && React.createElement("span", { style: { color: 'var(--text3)' } }, '· ', fmtRegion(event.r))
-        )
+    // Row 1: artist names
+    React.createElement("div", { style: S.artistName(rank) },
+      artists.length === 0
+        ? React.createElement("span", { style: S.artistLink, onClick: () => onVenueClick && onVenueClick(event.v) }, event.v)
+        : artists.map((artist, ai) =>
+            React.createElement(React.Fragment, { key: ai },
+              ai > 0 && React.createElement("span", { style: { color: 'var(--text3)' } }, ' · '),
+              React.createElement("span", {
+                style: S.artistLink,
+                onClick: (e) => { e.stopPropagation(); onArtistClick && onArtistClick(artist, event); }
+              }, artist)
+            )
+          ),
+      newEvent && React.createElement("span", { style: { ...S.newBadge, marginLeft: '6px' } }, "NEW"),
+      tagged && React.createElement("span", { style: { ...S.tag('#e8ff47'), marginLeft: '6px' } }, "★"),
+      hasTicket && React.createElement("span", { style: { ...S.tag('var(--green)'), marginLeft: '6px' } }, "🎫"),
+      isDJ && React.createElement("span", { style: { ...S.djBadge, marginLeft: '6px' } }, "DJ"),
+      event.rec && React.createElement("span", { style: { ...S.tag('#888855'), marginLeft: '6px', fontSize: '9px' } }, "recurring")
+    ),
+    // Row 2: venue/time/region (left) + price/age + action buttons (right)
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }, onClick: e => e.stopPropagation() },
+      // Venue + time + region (flex: 1 so it takes available space)
+      React.createElement("div", { style: { ...S.venueLine, flex: 1, flexWrap: 'nowrap', minWidth: 0 } },
+        event.v && React.createElement("span", {
+          style: S.venueLink,
+          onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
+        }, event.v),
+        event.t && React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', event.t),
+        event.te && React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '–', event.te),
+        event.r && React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', fmtRegion(event.r))
       ),
-      // Right side: price + ages
-      React.createElement("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px', flexShrink: 0 } },
+      // Price + age + action buttons (right-aligned)
+      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 } },
         event.p === '0' || event.p === 0 || event.pr === 'free'
           ? React.createElement("span", { style: S.priceBadge }, "FREE")
           : event.p && React.createElement("span", { style: { fontSize: '10px', color: 'var(--text3)' } }, "$", event.p),
-        (event.age === 'all' || event.age === 'all-ages') && React.createElement("span", { style: S.ageBadge(true) }, "all-ages")
-      )
-    ),
-    // Genre tags + action buttons on same row
-    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', marginTop: '2px', justifyContent: 'space-between' }, onClick: e => e.stopPropagation() },
-      // Left: genre + subgenre badges
-      React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', flex: 1 } },
-        (Array.isArray(event.g) ? event.g : [event.g]).filter(gRaw => {
-          const key = resolveGenre(gRaw);
-          return key !== 'other';
-        }).map((gRaw, gi) => {
-          const gResolved = GENRES[resolveGenre(gRaw)];
-          return React.createElement("span", { key: gi, style: S.tag(gResolved.color) }, gResolved.label);
-        }),
-        event.sg && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, fmtSg(event.sg))
-      ),
-      // Right: action buttons
-      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 } },
+        (event.age === 'all' || event.age === 'all-ages') && React.createElement("span", { style: S.ageBadge(true) }, "all-ages"),
         event.lk && React.createElement("a", { href: event.lk, target: "_blank", rel: "noopener", style: S.actionBtn }, "info ↗"),
         event.maps_url && React.createElement("a", { href: event.maps_url, target: "_blank", rel: "noopener", style: S.actionBtn }, "map ↗"),
         React.createElement("a", { href: gcalUrl(event), target: "_blank", rel: "noopener", style: S.actionBtn }, "+ cal"),
@@ -675,6 +656,19 @@ function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTa
         }, "mark DJ")
       )
     ),
+    // Row 3: genre + subgenre badges — only when there's something to show
+    (() => {
+      const genreBadges = (Array.isArray(event.g) ? event.g : [event.g]).filter(gRaw => resolveGenre(gRaw) !== 'other');
+      const hasBadges = genreBadges.length > 0 || !!event.sg;
+      if (!hasBadges) return null;
+      return React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '2px' } },
+        genreBadges.map((gRaw, gi) => {
+          const gResolved = GENRES[resolveGenre(gRaw)];
+          return React.createElement("span", { key: gi, style: S.tag(gResolved.color) }, gResolved.label);
+        }),
+        event.sg && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, fmtSg(event.sg))
+      );
+    })(),
     event.n && React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', marginTop: '2px', lineHeight: 1.4 } }, event.n)
   );
 }
