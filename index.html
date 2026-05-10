@@ -706,7 +706,7 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
 
   return React.createElement("div", { style: S.modal, onClick: onClose },
     React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
-      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' } },
+      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' } },
         React.createElement("div", { style: S.modalTitle }, artistName),
         React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
       ),
@@ -725,8 +725,27 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
           sgText && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, sgText)
         );
       })(),
-      // Artist links — MusicBrainz + Last.fm
-      React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' } },
+      // Artist links — MB-derived + discovery fallbacks
+      React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '8px' } },
+        // MB-derived links: only shown when the URL is actually populated
+        ...[
+          { key: 'spotify',     label: 'Spotify',     color: '#1db954' },
+          { key: 'bandcamp',    label: 'Bandcamp',    color: '#4a8fbb' },
+          { key: 'homepage',    label: 'Website',     color: '#aaaacc' },
+          { key: 'apple_music', label: 'Apple Music', color: '#fa57c1' },
+          { key: 'youtube',     label: 'YouTube',     color: '#ff4444' },
+          { key: 'soundcloud',  label: 'SoundCloud',  color: '#ff5500' },
+          { key: 'instagram',   label: 'Instagram',   color: '#c13584' },
+          { key: 'discogs',     label: 'Discogs',     color: '#333366' },
+        ].filter(({ key }) => mbLinks[key]).map(({ key, label, color }) =>
+          React.createElement("a", {
+            key,
+            href: mbLinks[key],
+            target: '_blank', rel: 'noopener',
+            style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: `1px solid ${color}44`, color, background: `${color}11`, textDecoration: 'none' }
+          }, label + ' ↗')
+        ),
+        // Discovery links: always shown as fallbacks
         React.createElement("a", {
           href: mbLinks.musicbrainz || `https://musicbrainz.org/search?query=${encodeURIComponent(artistName)}&type=artist`,
           target: '_blank', rel: 'noopener',
@@ -798,7 +817,7 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
 
   return React.createElement("div", { style: S.modal, onClick: onClose },
     React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
-      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' } },
+      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' } },
         React.createElement("div", null,
           React.createElement("div", { style: S.modalTitle }, venueName),
           (sample.addr || mapsHref) && React.createElement("a", {
