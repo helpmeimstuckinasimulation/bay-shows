@@ -686,25 +686,17 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
 }
 
 // ── Artist Panel (slide-up sheet) ─────────────────────────────────
-function ArtistPanel({ artistName, events, artistLinks, onClose }) {
+function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleTag, onToggleTicket, onHide, onVenueClick, onClose }) {
   const artistEvents = events.filter(e =>
     artistArray(e.a).some(a => a.toLowerCase() === artistName.toLowerCase())
   ).sort((a, b) => a.d < b.d ? -1 : 1);
 
-  // Look up links by normalized artist key (v2.14p).
-  // artistLinks is keyed by artistCacheKey(name) = lowercase + diacritic-stripped.
-  // We normalize the name the same way: lowercase, strip common diacritics.
   const normalizeKey = name => name.toLowerCase().trim()
     .replace(/[øØ]/g, 'o').replace(/[æÆ]/g, 'ae').replace(/[åÅ]/g, 'a')
     .replace(/[ðÐ]/g, 'd').replace(/[þÞ]/g, 'th').replace(/ß/g, 'ss')
     .replace(/[łŁ]/g, 'l').replace(/[œŒ]/g, 'oe')
     .normalize('NFD').replace(/[̀-ͯ]/g, '');
   const mbLinks = (artistLinks && artistLinks[normalizeKey(artistName)]) || {};
-
-  const LINK_DEFS = [
-    ['musicbrainz', 'MusicBrainz', '#ba478f'],
-    ['lastfm', 'Last.fm', '#d51007'],
-  ];
 
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
@@ -718,7 +710,7 @@ function ArtistPanel({ artistName, events, artistLinks, onClose }) {
         React.createElement("div", { style: S.modalTitle }, artistName),
         React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
       ),
-      // Genre + subgenre badges (from first upcoming event that has them)
+      // Genre + subgenre badges
       (() => {
         const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
         const src = artistEvents[0] || {};
@@ -750,13 +742,31 @@ function ArtistPanel({ artistName, events, artistLinks, onClose }) {
       artistEvents.length > 0 && React.createElement("div", null,
         React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px' } },
           `UPCOMING SHOWS (${artistEvents.length})`),
-        artistEvents.map(e =>
-          React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
-            React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500 } }, dateLabel(e.d)),
-            React.createElement("div", null, e.v, e.t ? ` · ${e.t}` : '', e.r ? ` · ${fmtRegion(e.r)}` : ''),
-            e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: { ...S.actionBtn, display: 'inline-block', marginTop: '4px' } }, "info ↗")
-          )
-        )
+        artistEvents.map(e => {
+          const tagged = tags && tags[e.id];
+          const hasTicket = tickets && tickets[e.id];
+          return React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
+            // Date row
+            React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, marginBottom: '2px' } }, dateLabel(e.d), e.t ? ` · ${e.t}` : ''),
+            // Venue as clickable link
+            React.createElement("div", { style: { marginBottom: '4px' } },
+              e.v && React.createElement("span", {
+                style: { color: 'var(--blue)', cursor: 'pointer', borderBottom: '1px dotted var(--blue)44' },
+                onClick: (ev) => { ev.stopPropagation(); onVenueClick && onVenueClick(e.v); }
+              }, e.v),
+              e.r && React.createElement("span", { style: { color: 'var(--text3)' } }, ` · ${fmtRegion(e.r)}`)
+            ),
+            // Action buttons row
+            React.createElement("div", { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }, onClick: ev => ev.stopPropagation() },
+              e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
+              e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
+              React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "+ cal"),
+              React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
+              React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫 got tix' : '🎫'),
+              React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => { onHide && onHide(e.id); } }, "✕")
+            )
+          );
+        })
       ),
       artistEvents.length === 0 && React.createElement("div", { style: { color: 'var(--text3)', fontSize: '11px' } }, "No upcoming shows found in current data.")
     )
@@ -764,9 +774,8 @@ function ArtistPanel({ artistName, events, artistLinks, onClose }) {
 }
 
 // ── Venue Panel ───────────────────────────────────────────────────
-function VenuePanel({ venueName, events, onClose }) {
+function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTicket, onHide, onArtistClick, onClose }) {
   const venueEvents = events.filter(e => e.v === venueName).sort((a, b) => a.d < b.d ? -1 : 1);
-  // Get venue metadata from first event
   const sample = venueEvents[0] || {};
 
   useEffect(() => {
@@ -775,7 +784,6 @@ function VenuePanel({ venueName, events, onClose }) {
     return () => document.removeEventListener('keydown', h);
   }, []);
 
-  // Build maps URL: prefer geo: URI on mobile (opens native app), fall back to Google Maps
   const isMobile = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
   const mapsHref = (() => {
     if (sample.lat && sample.lng) {
@@ -793,37 +801,57 @@ function VenuePanel({ venueName, events, onClose }) {
       React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' } },
         React.createElement("div", null,
           React.createElement("div", { style: S.modalTitle }, venueName),
-          // Line 2: address as maps link + region in parens
           (sample.addr || mapsHref) && React.createElement("a", {
             href: mapsHref || '#',
-            target: "_blank",
-            rel: "noopener",
+            target: "_blank", rel: "noopener",
             style: { fontSize: '11px', color: 'var(--blue)', marginTop: '3px', display: 'block', textDecoration: 'underline', textDecorationColor: 'var(--blue)44', lineHeight: 1.5 }
           }, [
             sample.addr,
             sample.city && sample.addr ? `, ${sample.city}` : sample.city,
             sample.r ? ` (${fmtRegion(sample.r)})` : ''
           ].filter(Boolean).join('') || 'Directions ↗'),
-          // Line 3: venue website
           sample.website && React.createElement("a", {
-            href: sample.website,
-            target: "_blank",
-            rel: "noopener",
+            href: sample.website, target: "_blank", rel: "noopener",
             style: { fontSize: '11px', color: 'var(--text2)', marginTop: '2px', display: 'block', textDecoration: 'underline', textDecorationColor: 'var(--border)' }
           }, sample.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''))
         ),
         React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
       ),
-      // Upcoming shows at this venue
+      // Upcoming shows
       React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px' } },
         `UPCOMING SHOWS (${venueEvents.length})`),
-      venueEvents.map(e =>
-        React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
-          React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500 } }, dateLabel(e.d), e.t ? ` · ${e.t}` : ''),
-          React.createElement("div", null, fmtA(e.a) || '—'),
-          e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: { ...S.actionBtn, display: 'inline-block', marginTop: '4px' } }, "info ↗")
-        )
-      )
+      venueEvents.map(e => {
+        const tagged = tags && tags[e.id];
+        const hasTicket = tickets && tickets[e.id];
+        const artists = artistArray(e.a);
+        return React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
+          // Date row
+          React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, marginBottom: '2px' } }, dateLabel(e.d), e.t ? ` · ${e.t}` : ''),
+          // Artists as clickable links
+          React.createElement("div", { style: { marginBottom: '4px' } },
+            artists.length === 0
+              ? React.createElement("span", null, '—')
+              : artists.map((artist, ai) =>
+                  React.createElement(React.Fragment, { key: ai },
+                    ai > 0 && React.createElement("span", { style: { color: 'var(--text3)' } }, ' · '),
+                    React.createElement("span", {
+                      style: { color: 'var(--blue)', cursor: 'pointer', borderBottom: '1px dotted var(--blue)44' },
+                      onClick: (ev) => { ev.stopPropagation(); onArtistClick && onArtistClick(artist, e); }
+                    }, artist)
+                  )
+                )
+          ),
+          // Action buttons
+          React.createElement("div", { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }, onClick: ev => ev.stopPropagation() },
+            e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
+            e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
+            React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "+ cal"),
+            React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
+            React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫 got tix' : '🎫'),
+            React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => { onHide && onHide(e.id); } }, "✕")
+          )
+        );
+      })
     )
   );
 }
@@ -1606,15 +1634,27 @@ function App() {
 
     // ── Modals ──
     artistPanel && React.createElement(ArtistPanel, {
-      artistName: artistPanel.name,
-      events:       allEvents,
-      artistLinks:  artistLinks,
-      onClose: () => setArtistPanel(null)
+      artistName:    artistPanel.name,
+      events:        allEvents,
+      artistLinks:   artistLinks,
+      tags,
+      tickets,
+      onToggleTag:   toggleTag,
+      onToggleTicket:toggleTicket,
+      onHide:        hideEvent,
+      onVenueClick:  (vname) => { setArtistPanel(null); setVenuePanel(vname); },
+      onClose:       () => setArtistPanel(null)
     }),
     venuePanel && React.createElement(VenuePanel, {
-      venueName: venuePanel,
-      events: allEvents,
-      onClose: () => setVenuePanel(null)
+      venueName:     venuePanel,
+      events:        allEvents,
+      tags,
+      tickets,
+      onToggleTag:   toggleTag,
+      onToggleTicket:toggleTicket,
+      onHide:        hideEvent,
+      onArtistClick: (name) => { setVenuePanel(null); setArtistPanel({ name }); },
+      onClose:       () => setVenuePanel(null)
     }),
     showAdd && React.createElement(AddModal, { onSave: e => { saveManual([e, ...manual]); }, onClose: () => setShowAdd(false) }),
   );
