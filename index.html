@@ -775,24 +775,42 @@ function VenuePanel({ venueName, events, onClose }) {
     return () => document.removeEventListener('keydown', h);
   }, []);
 
+  // Build maps URL: prefer geo: URI on mobile (opens native app), fall back to Google Maps
+  const isMobile = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  const mapsHref = (() => {
+    if (sample.lat && sample.lng) {
+      const label = encodeURIComponent(venueName);
+      return isMobile
+        ? `geo:${sample.lat},${sample.lng}?q=${sample.lat},${sample.lng}(${label})`
+        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((sample.addr ? sample.addr + ', ' : '') + (sample.city || '') + (sample.state ? ', ' + sample.state : ''))}`;
+    }
+    if (sample.maps_url) return sample.maps_url;
+    return null;
+  })();
+
   return React.createElement("div", { style: S.modal, onClick: onClose },
     React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
       React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' } },
         React.createElement("div", null,
           React.createElement("div", { style: S.modalTitle }, venueName),
-          sample.r && React.createElement("div", { style: { fontSize: '11px', color: 'var(--text2)', marginTop: '2px' } }, fmtRegion(sample.r)),
-          sample.maps_url && React.createElement("a", {
-            href: sample.maps_url,
+          // Line 2: address as maps link + region in parens
+          (sample.addr || mapsHref) && React.createElement("a", {
+            href: mapsHref || '#',
             target: "_blank",
             rel: "noopener",
-            style: { fontSize: '11px', color: 'var(--blue)', marginTop: '3px', display: 'block', textDecoration: 'underline', textDecorationColor: 'var(--blue)44' }
-          }, (() => {
-            try {
-              const u = new URL(sample.maps_url);
-              const q = u.searchParams.get('q') || u.searchParams.get('query');
-              return q ? decodeURIComponent(q) : 'Directions ↗';
-            } catch { return 'Directions ↗'; }
-          })())
+            style: { fontSize: '11px', color: 'var(--blue)', marginTop: '3px', display: 'block', textDecoration: 'underline', textDecorationColor: 'var(--blue)44', lineHeight: 1.5 }
+          }, [
+            sample.addr,
+            sample.city && sample.addr ? `, ${sample.city}` : sample.city,
+            sample.r ? ` (${fmtRegion(sample.r)})` : ''
+          ].filter(Boolean).join('') || 'Directions ↗'),
+          // Line 3: venue website
+          sample.website && React.createElement("a", {
+            href: sample.website,
+            target: "_blank",
+            rel: "noopener",
+            style: { fontSize: '11px', color: 'var(--text2)', marginTop: '2px', display: 'block', textDecoration: 'underline', textDecorationColor: 'var(--border)' }
+          }, sample.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''))
         ),
         React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
       ),
