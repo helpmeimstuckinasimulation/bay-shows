@@ -707,7 +707,7 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
   return React.createElement("div", { style: S.modal, onClick: onClose },
     React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
       React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' } },
-        React.createElement("div", { style: S.modalTitle }, artistName),
+        React.createElement("div", { style: { ...S.modalTitle, marginBottom: '2px' } }, artistName),
         React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
       ),
       // Genre + subgenre badges
@@ -819,7 +819,7 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
     React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
       React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' } },
         React.createElement("div", null,
-          React.createElement("div", { style: S.modalTitle }, venueName),
+          React.createElement("div", { style: { ...S.modalTitle, marginBottom: '2px' } }, venueName),
           (sample.addr || mapsHref) && React.createElement("a", {
             href: mapsHref || '#',
             target: "_blank", rel: "noopener",
