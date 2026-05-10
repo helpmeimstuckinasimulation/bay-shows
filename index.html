@@ -520,7 +520,8 @@ function nextMonthKey(currentDay, dayKeys) {
 
 // ── Styles ────────────────────────────────────────────────────────
 const S = {
-  app: { display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)', overflow: 'hidden' },
+  app: { display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)', overflow: 'hidden', alignItems: 'center' },
+  appInner: { display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '860px', height: '100%', overflow: 'hidden' },
   header: { padding: '12px 16px 10px', borderBottom: '1px solid var(--border2)', paddingTop: 'calc(12px + var(--safe-top))', background: 'var(--bg)', flexShrink: 0, zIndex: 10 },
   headerRow: { display: 'flex', alignItems: 'center', gap: '10px' },
   logo: { fontSize: '22px', lineHeight: 1, color: 'var(--accent)', flexShrink: 0 },
@@ -580,6 +581,7 @@ const ANIM_STYLE = `
   .filter-scroll::-webkit-scrollbar { display: none; }
   ::placeholder { color: var(--text3); }
   .more-panel { animation: slideDown 0.15s ease; }
+
 `;
 
 // ── EventCard ─────────────────────────────────────────────────────
@@ -1357,6 +1359,7 @@ function App() {
 
   return React.createElement("div", { style: S.app },
     React.createElement("style", null, ANIM_STYLE),
+    React.createElement("div", { style: S.appInner },
 
     // ── Header ──
     React.createElement("div", { style: S.header },
@@ -1553,6 +1556,8 @@ function App() {
         Object.keys(tickets).length > 0 ? ` · ${Object.keys(tickets).length} 🎫` : ''
       )
     ),
+
+    ), // end appInner
 
     // ── Modals ──
     artistPanel && React.createElement(ArtistPanel, {
