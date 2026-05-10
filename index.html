@@ -718,6 +718,21 @@ function ArtistPanel({ artistName, events, artistLinks, onClose }) {
         React.createElement("div", { style: S.modalTitle }, artistName),
         React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
       ),
+      // Genre + subgenre badges (from first upcoming event that has them)
+      (() => {
+        const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
+        const src = artistEvents[0] || {};
+        const genreBadges = (Array.isArray(src.g) ? src.g : [src.g])
+          .filter(gRaw => gRaw && typeof gRaw === 'string' && gRaw.trim() && (() => { const k = resolveGenre(gRaw); return k !== 'other' && GENRE_KEYS_SET.has(k); })())
+          .map(gRaw => ({ key: resolveGenre(gRaw), ...GENRES[resolveGenre(gRaw)] }))
+          .filter((item, idx, arr) => arr.findIndex(x => x.key === item.key) === idx);
+        const sgText = fmtSg(src.sg);
+        if (!genreBadges.length && !sgText) return null;
+        return React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '10px' } },
+          genreBadges.map((g, gi) => React.createElement("span", { key: gi, style: S.tag(g.color) }, g.label)),
+          sgText && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, sgText)
+        );
+      })(),
       // Artist links — MusicBrainz + Last.fm
       React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' } },
         React.createElement("a", {
@@ -765,15 +780,21 @@ function VenuePanel({ venueName, events, onClose }) {
       React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' } },
         React.createElement("div", null,
           React.createElement("div", { style: S.modalTitle }, venueName),
-          sample.r && React.createElement("div", { style: { fontSize: '11px', color: 'var(--text2)', marginTop: '2px' } }, fmtRegion(sample.r))
+          sample.r && React.createElement("div", { style: { fontSize: '11px', color: 'var(--text2)', marginTop: '2px' } }, fmtRegion(sample.r)),
+          sample.maps_url && React.createElement("a", {
+            href: sample.maps_url,
+            target: "_blank",
+            rel: "noopener",
+            style: { fontSize: '11px', color: 'var(--blue)', marginTop: '3px', display: 'block', textDecoration: 'underline', textDecorationColor: 'var(--blue)44' }
+          }, (() => {
+            try {
+              const u = new URL(sample.maps_url);
+              const q = u.searchParams.get('q') || u.searchParams.get('query');
+              return q ? decodeURIComponent(q) : 'Directions ↗';
+            } catch { return 'Directions ↗'; }
+          })())
         ),
         React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
-      ),
-      // Info row
-      React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' } },
-        sample.maps_url && React.createElement("a", { href: sample.maps_url, target: "_blank", rel: "noopener", style: S.actionBtn }, "Directions ↗"),
-        React.createElement("span", { style: { ...S.tag(GENRES[resolveGenre(sample.g)]?.color || '#888899'), fontSize: '9px' } },
-          GENRES[resolveGenre(sample.g)]?.label || 'Various')
       ),
       // Upcoming shows at this venue
       React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px' } },
