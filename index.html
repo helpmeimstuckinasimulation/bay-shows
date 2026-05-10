@@ -534,8 +534,8 @@ const S = {
   dayGroup: { padding: '0' },
   dayHeader: { padding: '8px 16px 5px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.12em', color: 'var(--text3)', textTransform: 'uppercase', position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 5, borderBottom: '1px solid var(--border2)' },
   timeDivider: { padding: '4px 16px', fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.08em', borderBottom: '1px solid var(--border2)', background: 'var(--bg2)' },
-  card: rank => ({ padding: `${rank === 0 ? '12px' : '9px'} 16px`, borderBottom: '1px solid var(--border2)', display: 'flex', flexDirection: 'column', gap: '3px', transition: 'background 0.1s', background: 'transparent' }),
-  artistName: rank => ({ fontSize: rank === 0 ? '14px' : rank === 1 ? '13px' : '12px', fontWeight: rank === 0 ? 700 : rank === 1 ? 500 : 400, color: 'var(--text)', letterSpacing: '0.02em', lineHeight: 1.3 }),
+  card: { padding: '9px 16px', borderBottom: '1px solid var(--border2)', display: 'flex', flexDirection: 'column', gap: '3px', transition: 'background 0.1s', background: 'transparent' },
+  artistName: { fontSize: '13px', fontWeight: 500, color: 'var(--text)', letterSpacing: '0.02em', lineHeight: 1.3 },
   artistLink: { color: 'var(--text)', cursor: 'pointer', borderBottom: '1px dotted var(--border)', paddingBottom: '1px' },
   venueLine: { fontSize: '11px', color: 'var(--text2)', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' },
   venueLink: { color: 'var(--text2)', cursor: 'pointer', borderBottom: '1px dotted var(--border2)', paddingBottom: '1px' },
@@ -584,7 +584,7 @@ const ANIM_STYLE = `
 `;
 
 // ── EventCard ─────────────────────────────────────────────────────
-function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTag, onToggleTicket, onHide, onToggleDJ, onArtistClick, onVenueClick }) {
+function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onToggleTicket, onHide, onToggleDJ, onArtistClick, onVenueClick }) {
   const tagged = tags && tags[event.id];
   const hasTicket = tickets && tickets[event.id];
   const isHidden = hidden && hidden[event.id];
@@ -598,11 +598,11 @@ function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTa
 
   return React.createElement("div", {
     className: 'card-hover',
-    style: { ...S.card(rank), position: 'relative' }
+    style: { ...S.card, position: 'relative' }
   },
     // Row 1: artist names + price/age (right)
     React.createElement("div", { style: { display: 'flex', alignItems: 'flex-start', gap: '8px' } },
-      React.createElement("div", { style: { ...S.artistName(rank), flex: 1 } },
+      React.createElement("div", { style: { ...S.artistName, flex: 1 } },
         artists.length === 0
           ? React.createElement("span", { style: S.artistLink, onClick: () => onVenueClick && onVenueClick(event.v) }, event.v)
           : artists.map((artist, ai) =>
@@ -1082,7 +1082,7 @@ function App() {
     if (urlView && ['today', 'week', 'month'].includes(urlView)) saved.view = urlView;
     return saved;
   });
-  const [expandedDays, setExpandedDays] = useState(() => new Set([todayStr()]));
+  const [expandedDays, setExpandedDays] = useState(() => new Set());
   const [showAdd, setShowAdd] = useState(false);
   const [showInstall, setShowInstall] = useState(true);
   const [showMoreFilters, setShowMoreFilters] = useState(false);
@@ -1320,6 +1320,11 @@ function App() {
   const expandAll = () => setExpandedDays(new Set(dayKeys));
   const collapseAll = () => setExpandedDays(new Set());
 
+  // Auto-expand all days on initial load and whenever filters change
+  useEffect(() => {
+    if (dayKeys.length > 0) setExpandedDays(new Set(dayKeys));
+  }, [dayKeys.join(',')]);
+
   const toggleDay = (day) => {
     const next = new Set(expandedDays);
     next.has(day) ? next.delete(day) : next.add(day);
@@ -1529,7 +1534,6 @@ function App() {
                 React.createElement(EventCard, {
                   key: event.id,
                   event: event,
-                  rank: i < 3 ? i : 3,
                   tags, tickets, hidden, djOverrides,
                   onToggleTag: toggleTag,
                   onToggleTicket: toggleTicket,
