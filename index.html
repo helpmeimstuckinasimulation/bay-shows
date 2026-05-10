@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -50,9 +49,7 @@
   <div id="root"></div>
 
   <script src="https://accounts.google.com/gsi/client" async></script>
-
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
   <script>
@@ -643,36 +640,40 @@ function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTa
         (event.age === 'all' || event.age === 'all-ages') && React.createElement("span", { style: S.ageBadge(true) }, "all-ages")
       )
     ),
-    // Genre tags
-    React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', marginTop: '2px' } },
-      (Array.isArray(event.g) ? event.g : [event.g]).map((gRaw, gi) => {
-        const gResolved = GENRES[resolveGenre(gRaw)] || GENRES.other;
-        return React.createElement("span", { key: gi, style: S.tag(gResolved.color) }, gResolved.label);
-      }),
-      event.sg && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, fmtSg(event.sg)),
-      event.s === 'riotlist' && React.createElement("span", { style: { ...S.tag('#555568'), fontSize: '9px' } }, "riotlist"),
-      event.s === '19hz' && React.createElement("span", { style: { ...S.tag('#555568'), fontSize: '9px' } }, "19hz")
+    // Genre tags + action buttons on same row
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', marginTop: '2px', justifyContent: 'space-between' }, onClick: e => e.stopPropagation() },
+      // Left: genre + subgenre badges
+      React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', flex: 1 } },
+        (Array.isArray(event.g) ? event.g : [event.g]).filter(gRaw => {
+          const key = resolveGenre(gRaw);
+          return key !== 'other';
+        }).map((gRaw, gi) => {
+          const gResolved = GENRES[resolveGenre(gRaw)];
+          return React.createElement("span", { key: gi, style: S.tag(gResolved.color) }, gResolved.label);
+        }),
+        event.sg && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, fmtSg(event.sg))
+      ),
+      // Right: action buttons
+      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 } },
+        event.lk && React.createElement("a", { href: event.lk, target: "_blank", rel: "noopener", style: S.actionBtn }, "info ↗"),
+        event.maps_url && React.createElement("a", { href: event.maps_url, target: "_blank", rel: "noopener", style: S.actionBtn }, "map ↗"),
+        React.createElement("a", { href: gcalUrl(event), target: "_blank", rel: "noopener", style: S.actionBtn }, "+ cal"),
+        React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag(event.id) }, tagged ? '★' : '☆'),
+        React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket(event.id) }, hasTicket ? '🎫 got tix' : '🎫'),
+        React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => onHide(event.id) }, "✕"),
+        isDJ && React.createElement("button", {
+          style: { ...S.actionBtn, fontSize: '9px', color: 'var(--text3)' },
+          title: 'Mark as live event',
+          onClick: () => onToggleDJ(event.id, 'live')
+        }, "mark live"),
+        !isDJ && event.s === '19hz' && React.createElement("button", {
+          style: { ...S.actionBtn, fontSize: '9px', color: 'var(--text3)' },
+          title: 'Mark as DJ/club event',
+          onClick: () => onToggleDJ(event.id, 'dj')
+        }, "mark DJ")
+      )
     ),
-    event.n && React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', marginTop: '2px', lineHeight: 1.4 } }, event.n),
-    // Action row
-    React.createElement("div", { style: S.actionRow, onClick: e => e.stopPropagation() },
-      event.lk && React.createElement("a", { href: event.lk, target: "_blank", rel: "noopener", style: S.actionBtn }, "info ↗"),
-      event.maps_url && React.createElement("a", { href: event.maps_url, target: "_blank", rel: "noopener", style: S.actionBtn }, "map ↗"),
-      React.createElement("a", { href: gcalUrl(event), target: "_blank", rel: "noopener", style: S.actionBtn }, "+ cal"),
-      React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag(event.id) }, tagged ? '★' : '☆'),
-      React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket(event.id) }, hasTicket ? '🎫 got tix' : '🎫'),
-      React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => onHide(event.id) }, "✕"),
-      isDJ && React.createElement("button", {
-        style: { ...S.actionBtn, fontSize: '9px', color: 'var(--text3)' },
-        title: 'Mark as live event',
-        onClick: () => onToggleDJ(event.id, 'live')
-      }, "mark live"),
-      !isDJ && event.s === '19hz' && React.createElement("button", {
-        style: { ...S.actionBtn, fontSize: '9px', color: 'var(--text3)' },
-        title: 'Mark as DJ/club event',
-        onClick: () => onToggleDJ(event.id, 'dj')
-      }, "mark DJ")
-    )
+    event.n && React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', marginTop: '2px', lineHeight: 1.4 } }, event.n)
   );
 }
 
@@ -693,12 +694,8 @@ function ArtistPanel({ artistName, events, artistLinks, onClose }) {
   const mbLinks = (artistLinks && artistLinks[normalizeKey(artistName)]) || {};
 
   const LINK_DEFS = [
-    ['spotify', 'Spotify', '#1db954'],
-    ['bandcamp', 'Bandcamp', '#4a8fbb'],
-    ['apple_music', 'Apple Music', '#fa57c1'],
-    ['youtube', 'YouTube', '#ff4444'],
+    ['musicbrainz', 'MusicBrainz', '#ba478f'],
     ['lastfm', 'Last.fm', '#d51007'],
-    ['homepage', 'Site', '#888'],
   ];
 
   useEffect(() => {
@@ -713,21 +710,18 @@ function ArtistPanel({ artistName, events, artistLinks, onClose }) {
         React.createElement("div", { style: S.modalTitle }, artistName),
         React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
       ),
-      // Listen links
-      Object.keys(mbLinks).length > 0 && React.createElement("div", { style: { marginBottom: '12px' } },
-        React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '5px' } }, "LISTEN"),
-        React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap' } },
-          LINK_DEFS.filter(([k]) => mbLinks[k]).map(([k, label, color]) =>
-            React.createElement("a", { key: k, href: mbLinks[k], target: "_blank", rel: "noopener",
-              style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: `1px solid ${color}44`, color, background: `${color}11`, textDecoration: 'none' } }, label)
-          )
-        )
-      ),
-      // Search links
-      React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' } },
-        React.createElement("a", { href: `https://open.spotify.com/search/${encodeURIComponent(artistName)}`, target: '_blank', rel: 'noopener', style: { ...S.actionBtn } }, "Spotify ↗"),
-        React.createElement("a", { href: `https://bandcamp.com/search?q=${encodeURIComponent(artistName)}`, target: '_blank', rel: 'noopener', style: { ...S.actionBtn } }, "Bandcamp ↗"),
-        React.createElement("a", { href: `https://www.google.com/search?q=${encodeURIComponent(artistName + ' band')}`, target: '_blank', rel: 'noopener', style: { ...S.actionBtn } }, "Google ↗")
+      // Artist links — MusicBrainz + Last.fm
+      React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' } },
+        React.createElement("a", {
+          href: mbLinks.musicbrainz || `https://musicbrainz.org/search?query=${encodeURIComponent(artistName)}&type=artist`,
+          target: '_blank', rel: 'noopener',
+          style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: '1px solid #ba478f44', color: '#ba478f', background: '#ba478f11', textDecoration: 'none' }
+        }, "MusicBrainz ↗"),
+        React.createElement("a", {
+          href: mbLinks.lastfm || `https://www.last.fm/search/artists?q=${encodeURIComponent(artistName)}`,
+          target: '_blank', rel: 'noopener',
+          style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: '1px solid #d5100744', color: '#d51007', background: '#d5100711', textDecoration: 'none' }
+        }, "Last.fm ↗")
       ),
       // Upcoming shows
       artistEvents.length > 0 && React.createElement("div", null,
@@ -1580,6 +1574,5 @@ function App() {
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(React.createElement(App, null));
   </script>
-
 </body>
 </html>
