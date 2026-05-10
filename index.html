@@ -804,8 +804,7 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
   };
 
   const minLabel = m => {
-    const h = Math.floor(m / 60) % 24;
-    const min = m % 60;
+    const h = Math.floor(m / 60) % 24, min = m % 60;
     return `${h % 12 || 12}:${pad(min)} ${h < 12 ? 'AM' : 'PM'}`;
   };
 
@@ -845,8 +844,14 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
     border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
     color: active ? 'var(--bg)' : 'var(--text2)',
     background: active ? 'var(--accent)' : 'transparent',
-    whiteSpace: 'nowrap', letterSpacing: '0.04em', transition: 'all 0.12s',
+    whiteSpace: 'nowrap', letterSpacing: '0.04em',
   });
+
+  const SectionHead = ({ children }) => React.createElement("div", {
+    style: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px', marginTop: '4px' }
+  }, children);
+
+  const Divider = () => React.createElement("div", { style: { borderTop: '1px solid var(--border2)', margin: '10px 0' } });
 
   const bucketDefs = [
     ['morning', '🌅 Morning', '6 AM–Noon'],
@@ -855,33 +860,25 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
     ['night',   '🌙 Night',    '9 PM+'],
   ];
 
-  const sectionHead = txt => React.createElement("div", {
-    style: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px', marginTop: '4px' }
-  }, txt);
-
-  const divider = React.createElement("div", { style: { borderTop: '1px solid var(--border2)', margin: '10px 0' } });
-
-  return React.createElement("div", { className: 'more-panel', style: S.moreFiltersPanel, onClick: e => e.stopPropagation() },
-
+  return React.createElement("div", { style: S.moreFiltersPanel, onClick: e => e.stopPropagation() },
     // drag handle
     React.createElement("div", { style: { width: '36px', height: '4px', borderRadius: '2px', background: 'var(--border)', margin: '0 auto 14px' } }),
 
     // ── Recency ──
-    sectionHead('RECENCY'),
+    React.createElement(SectionHead, null, "RECENCY"),
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' } },
-      React.createElement("span", {
-        style: { fontSize: '11px', cursor: 'pointer', fontWeight: local.recencyMode === 'da' ? 700 : 400,
-          color: local.recencyMode === 'da' ? 'var(--accent)' : 'var(--text3)',
-          textDecoration: local.recencyMode === 'da' ? 'underline' : 'none', textDecorationStyle: 'dotted' },
-        onClick: () => setLocal(p => ({ ...p, recencyMode: 'da' }))
-      }, "date added"),
-      React.createElement("span", { style: { color: 'var(--text3)', fontSize: '10px' } }, "/"),
-      React.createElement("span", {
-        style: { fontSize: '11px', cursor: 'pointer', fontWeight: local.recencyMode === 'dm' ? 700 : 400,
-          color: local.recencyMode === 'dm' ? 'var(--accent)' : 'var(--text3)',
-          textDecoration: local.recencyMode === 'dm' ? 'underline' : 'none', textDecorationStyle: 'dotted' },
-        onClick: () => setLocal(p => ({ ...p, recencyMode: 'dm' }))
-      }, "date modified"),
+      ...['da', 'dm'].map((mode, i) => [
+        i > 0 && React.createElement("span", { key: 'sep', style: { color: 'var(--text3)', fontSize: '10px' } }, "/"),
+        React.createElement("span", { key: mode, style: {
+          fontSize: '11px', cursor: 'pointer',
+          fontWeight: local.recencyMode === mode ? 700 : 400,
+          color: local.recencyMode === mode ? 'var(--accent)' : 'var(--text3)',
+          textDecoration: local.recencyMode === mode ? 'underline' : 'none',
+          textDecorationStyle: 'dotted',
+        }, onClick: () => setLocal(p => ({ ...p, recencyMode: mode })) },
+          mode === 'da' ? 'date added' : 'date modified'
+        )
+      ]).flat().filter(Boolean)
     ),
     React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' } },
       React.createElement("button", { style: chip(recencyActive('1d')), onClick: () => setRecency('1d') }, "today"),
@@ -890,17 +887,17 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
         style: { ...chip(recencyActive('since')), display: 'inline-flex', gap: '4px', alignItems: 'center' },
         onClick: () => setRecency('since')
       },
-        "since",
+        "since ",
         recencyActive('since')
           ? React.createElement("strong", { style: { color: 'var(--accent)' } }, fmtSinceDate(local.recencyWindow && local.recencyWindow.since))
-          : React.createElement("span", { style: { borderBottom: '1px solid currentColor', opacity: 0.5, minWidth: '28px', textAlign: 'center' } }, "···")
+          : React.createElement("span", { style: { opacity: 0.5, borderBottom: '1px solid currentColor', minWidth: '28px', textAlign: 'center' } }, "···")
       ),
     ),
     recencyActive('since') && React.createElement("input", {
       type: 'date',
       value: (local.recencyWindow && local.recencyWindow.since) || todayStr(),
       max: todayStr(),
-      style: { display: 'block', marginBottom: '8px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '13px', padding: '6px 10px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%' },
+      style: { display: 'block', marginBottom: '8px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '13px', padding: '6px 10px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%', boxSizing: 'border-box' },
       onChange: e => setLocal(p => ({ ...p, recencyWindow: { since: e.target.value } }))
     }),
     local.recencyWindow && React.createElement("button", {
@@ -908,10 +905,10 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
       onClick: () => setLocal(p => ({ ...p, recencyWindow: null }))
     }, "clear"),
 
-    divider,
+    React.createElement(Divider, null),
 
     // ── Time of day ──
-    sectionHead('TIME OF DAY'),
+    React.createElement(SectionHead, null, "TIME OF DAY"),
     React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' } },
       bucketDefs.map(([key, label, sub]) => {
         const active = (local.timeBuckets || []).includes(key);
@@ -930,10 +927,10 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
       onClick: () => setLocal(p => ({ ...p, timeBuckets: [] }))
     }, "clear"),
 
-    divider,
+    React.createElement(Divider, null),
 
     // ── Time range sliders ──
-    sectionHead('START TIME'),
+    React.createElement(SectionHead, null, "START TIME"),
     React.createElement("div", { style: { display: 'flex', justifyContent: 'flex-end', fontSize: '11px', color: 'var(--accent)', marginBottom: '4px' } },
       local.timeRange[0] > 0 ? `from ${minLabel(local.timeRange[0])}` : 'any'
     ),
@@ -945,8 +942,7 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
     React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text3)', marginBottom: '10px' } },
       React.createElement("span", null, "12 AM"), React.createElement("span", null, "12 PM"), React.createElement("span", null, "11:45 PM")
     ),
-
-    sectionHead('END TIME'),
+    React.createElement(SectionHead, null, "END TIME"),
     React.createElement("div", { style: { display: 'flex', justifyContent: 'flex-end', fontSize: '11px', color: 'var(--accent)', marginBottom: '4px' } },
       local.timeRange[1] < 1439 ? `by ${minLabel(local.timeRange[1])}` : 'any'
     ),
@@ -963,7 +959,7 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
       onClick: () => setLocal(p => ({ ...p, timeRange: [0, 1439] }))
     }, "reset"),
 
-    divider,
+    React.createElement(Divider, null),
 
     // ── Boolean rows ──
     React.createElement(Row, { label: "Free only", field: "freeOnly" }),
@@ -977,7 +973,6 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
     React.createElement(Row, { label: "Hide recurring events", field: "hideRecurring", desc: "Filters out weekly/monthly club nights" }),
     React.createElement(Row, { label: "Recurring events only", field: "recurringOnly", desc: "Show only regular series" }),
 
-    // ── Save / Cancel ──
     React.createElement("div", { style: { display: 'flex', gap: '8px', marginTop: '16px' } },
       React.createElement("button", {
         style: { ...S.btnPrimary, flex: 1, marginTop: 0, fontSize: '13px', padding: '10px' },
@@ -1264,19 +1259,29 @@ function App() {
         const { startMins, endMins } = eventTimings(e);
         if (startMins > prefs.timeRange[1] || (endMins % 1440) < prefs.timeRange[0]) return false;
       }
-      // Recency filter
+      // Recency filter — da/dm can be "YYYY-MM-DD" string OR ms timestamp number.
+      // Normalise both to "YYYY-MM-DD" for comparison.
       if (prefs.recencyWindow) {
-        const ts = prefs.recencyMode === 'dm' ? e.dm : e.da;
-        if (!ts) return false;
+        const raw = prefs.recencyMode === 'dm' ? e.dm : e.da;
+        if (!raw) return false;
+        let evDateStr; // "YYYY-MM-DD"
+        if (typeof raw === 'number') {
+          const d = new Date(raw);
+          evDateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+        } else {
+          // Already a string — take just the date portion
+          evDateStr = String(raw).slice(0, 10);
+        }
+        const today = todayStr();
         if (prefs.recencyWindow === '1d') {
-          const evD = new Date(ts), now = new Date();
-          if (evD.getFullYear() !== now.getFullYear() || evD.getMonth() !== now.getMonth() || evD.getDate() !== now.getDate()) return false;
+          if (evDateStr !== today) return false;
         } else if (prefs.recencyWindow === '7d') {
-          const cutoff = new Date(); cutoff.setHours(0,0,0,0); cutoff.setDate(cutoff.getDate() - 6);
-          if (ts < cutoff.getTime()) return false;
+          // today and the 6 prior days
+          const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 6);
+          const cutoffStr = `${cutoff.getFullYear()}-${pad(cutoff.getMonth()+1)}-${pad(cutoff.getDate())}`;
+          if (evDateStr < cutoffStr) return false;
         } else if (prefs.recencyWindow && prefs.recencyWindow.since) {
-          const [sy, sm, sd] = prefs.recencyWindow.since.split('-').map(Number);
-          if (ts < new Date(sy, sm - 1, sd, 0, 0, 0, 0).getTime()) return false;
+          if (evDateStr < prefs.recencyWindow.since) return false;
         }
       }
       // Search
@@ -1411,17 +1416,13 @@ function App() {
       })
     ),
 
-    // ── More Filters Panel (modal sheet) ──
+    // ── More Filters Panel ──
     showMoreFilters && React.createElement(React.Fragment, null,
       React.createElement("div", {
         style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 199, backdropFilter: 'blur(2px)' },
         onClick: () => setShowMoreFilters(false)
       }),
-      React.createElement(MoreFiltersPanel, {
-        prefs,
-        savePrefs,
-        onClose: () => setShowMoreFilters(false)
-      })
+      React.createElement(MoreFiltersPanel, { prefs, savePrefs, onClose: () => setShowMoreFilters(false) })
     ),
 
     // ── Genre chips ──
