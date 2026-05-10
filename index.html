@@ -299,8 +299,8 @@ const REGIONS = {
 const fmtRegion = (r) => REGIONS[r] || r || '';
 const fmtSg = (sg) => {
   if (!sg) return '';
-  if (Array.isArray(sg)) return sg.filter(Boolean).join(', ');
-  return String(sg);
+  if (Array.isArray(sg)) return sg.filter(Boolean).map(s => String(s).trim()).filter(Boolean).join(', ');
+  return String(sg).trim();
 };
 
 // ── DJ classification ────────────────────────────────────────────
@@ -656,17 +656,25 @@ function EventCard({ event, rank, tags, tickets, hidden, djOverrides, onToggleTa
         }, "mark DJ")
       )
     ),
-    // Row 3: genre + subgenre badges — only when there's something to show
+    // Row 3: genre + subgenre badges — only when there's something real to show
     (() => {
-      const genreBadges = (Array.isArray(event.g) ? event.g : [event.g]).filter(gRaw => resolveGenre(gRaw) !== 'other');
-      const hasBadges = genreBadges.length > 0 || !!event.sg;
+      const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
+      const genreBadges = (Array.isArray(event.g) ? event.g : [event.g])
+        .filter(gRaw => {
+          if (!gRaw || typeof gRaw !== 'string' || !gRaw.trim()) return false;
+          const key = resolveGenre(gRaw);
+          return key !== 'other' && GENRE_KEYS_SET.has(key);
+        })
+        .map(gRaw => ({ key: resolveGenre(gRaw), ...GENRES[resolveGenre(gRaw)] }))
+        .filter((item, idx, arr) => arr.findIndex(x => x.key === item.key) === idx); // dedupe
+      const sgText = fmtSg(event.sg);
+      const hasBadges = genreBadges.length > 0 || !!sgText;
       if (!hasBadges) return null;
       return React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '2px' } },
-        genreBadges.map((gRaw, gi) => {
-          const gResolved = GENRES[resolveGenre(gRaw)];
-          return React.createElement("span", { key: gi, style: S.tag(gResolved.color) }, gResolved.label);
-        }),
-        event.sg && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, fmtSg(event.sg))
+        genreBadges.map((g, gi) =>
+          React.createElement("span", { key: gi, style: S.tag(g.color) }, g.label)
+        ),
+        sgText && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, sgText)
       );
     })(),
     event.n && React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', marginTop: '2px', lineHeight: 1.4 } }, event.n)
