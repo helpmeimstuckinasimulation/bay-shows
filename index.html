@@ -48,7 +48,6 @@
 <body>
   <div id="root"></div>
 
-  <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
@@ -83,6 +82,9 @@ const GOOG_PREFS_FILE = 'bay_shows_prefs.json';
 const GOOG_TAGS_FILE  = 'bay_shows_tags.json';
 const GDRIVE_FILEID_KEY = 'bay-gdrive-fileid-v1';
 
+const GDRIVE_USER_KEY   = 'bay-gdrive-user-v1';  // { email } — survives token expiry
+const WORKER_BASE       = 'https://bay-shows-auth.dranahan.workers.dev';
+
 const _driveFileIds = (() => {
   try { return JSON.parse(localStorage.getItem(GDRIVE_FILEID_KEY) || '{}'); } catch { return {}; }
 })();
@@ -90,71 +92,75 @@ function _saveFileIdCache() {
   try { localStorage.setItem(GDRIVE_FILEID_KEY, JSON.stringify(_driveFileIds)); } catch {}
 }
 
+// Return a fresh stored token, or null if missing/expired (with 60s buffer).
 const getStoredToken = () => {
   const t = lsGet(GDRIVE_AUTH_KEY, null);
-  if (!t || !t.access_token) return null;
-  if (t.expires_at && Date.now() > t.expires_at - 60000) return null;
+  if (!t || !t.access_token || !t.expires_at) return null;
+  if (Date.now() > t.expires_at - 60000) return null;
   return t;
 };
 
-// Attempt silent token refresh via GIS (no popup, uses existing consent).
-// Resolves with access_token string, rejects if user hasn't consented yet
-// or if GIS isn't loaded yet (e.g. slow network).
-const refreshTokenSilently = () => new Promise((resolve, reject) => {
-  if (!window.google || !window.google.accounts) {
-    reject(new Error('GIS not loaded'));
-    return;
-  }
-  const client = window.google.accounts.oauth2.initTokenClient({
-    client_id: GOOG_CLIENT_ID,
-    scope: GOOG_SCOPE,
-    prompt: '',          // empty = silent re-auth, no popup shown
-    callback: (resp) => {
-      if (resp.error) { reject(new Error(resp.error)); return; }
-      const tokenData = {
-        access_token: resp.access_token,
-        expires_at: Date.now() + (resp.expires_in * 1000)
-      };
-      lsSet(GDRIVE_AUTH_KEY, tokenData);
-      resolve(resp.access_token);
-    }
+// Ask the Cloudflare Worker to mint a new access token using its server-side
+// refresh token. Returns the new access_token string, throws on failure.
+const refreshViaWorker = async () => {
+  const resp = await fetch(`${WORKER_BASE}/refresh`, { credentials: 'include' });
+  if (!resp.ok) throw new Error(`refresh_failed:${resp.status}`);
+  const data = await resp.json();
+  if (!data.access_token) throw new Error('refresh_no_token');
+  lsSet(GDRIVE_AUTH_KEY, {
+    access_token: data.access_token,
+    expires_at: Date.now() + ((data.expires_in || 3600) * 1000),
   });
-  client.requestAccessToken();
-});
+  return data.access_token;
+};
 
-// Get a valid token: use stored if fresh, try silent refresh if we've
-// previously signed in, otherwise fall back to full interactive auth tab.
+// Get a valid token: use stored if fresh, try Worker refresh if we have prior
+// auth evidence, otherwise optionally open the full auth tab.
 const getOrRefreshToken = async (openTabFallback = false) => {
   const stored = getStoredToken();
   if (stored) return stored.access_token;
-  // If we have a stale record at all, the user consented before — try silent
   const stale = lsGet(GDRIVE_AUTH_KEY, null);
   if (stale && stale.access_token) {
-    try { return await refreshTokenSilently(); } catch {}
+    try { return await refreshViaWorker(); } catch {}
   }
   if (openTabFallback) return openAuthTab();
   return null;
 };
 
+// Proactive refresh: schedule a silent renewal 5 min before expiry.
+let _refreshTimer = null;
+const scheduleTokenRefresh = () => {
+  if (_refreshTimer) clearTimeout(_refreshTimer);
+  const t = lsGet(GDRIVE_AUTH_KEY, null);
+  if (!t || !t.expires_at) return;
+  const delay = t.expires_at - Date.now() - 5 * 60 * 1000;
+  if (delay <= 0) return;
+  _refreshTimer = setTimeout(async () => {
+    try { await refreshViaWorker(); scheduleTokenRefresh(); } catch {}
+  }, delay);
+};
+
+const AUTH_URL = 'https://helpmeimstuckinasimulation.github.io/bay-shows/auth.html';
+
 const openAuthTab = () => new Promise((resolve, reject) => {
-  const authUrl = window.location.origin + window.location.pathname.replace(/[^/]*$/, '') + 'auth.html';
-  const tab = window.open(authUrl, '_blank');
+  const tab = window.open(AUTH_URL, '_blank');
   if (!tab) { reject(new Error('popup_blocked')); return; }
   const startTime = Date.now();
   const TIMEOUT_MS = 5 * 60 * 1000;
   const poll = setInterval(() => {
-    const stored = getStoredToken();
-    if (stored) { clearInterval(poll); resolve(stored.access_token); return; }
+    // Poll raw localStorage — don't use getStoredToken() which filters by expiry
+    const t = lsGet(GDRIVE_AUTH_KEY, null);
+    if (t && t.access_token) { clearInterval(poll); resolve(t.access_token); return; }
     if (tab.closed) {
       clearInterval(poll);
-      const finalCheck = getStoredToken();
-      if (finalCheck) { resolve(finalCheck.access_token); return; }
+      const final = lsGet(GDRIVE_AUTH_KEY, null);
+      if (final && final.access_token) { resolve(final.access_token); return; }
       reject(new Error('Tab closed without completing sign-in'));
       return;
     }
     if (Date.now() - startTime > TIMEOUT_MS) {
       clearInterval(poll);
-      try { tab.close(); } catch(e) {}
+      try { tab.close(); } catch {}
       reject(new Error('Sign-in timed out'));
     }
   }, 500);
@@ -1344,7 +1350,10 @@ function App() {
     try {
       const ui = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${token}` } });
       const user = await ui.json();
+      if (!user.email) throw new Error('Could not fetch user info');
       setDriveUser({ email: user.email });
+      lsSet(GDRIVE_USER_KEY, { email: user.email });
+      scheduleTokenRefresh();
       const drivePrefs = await driveRead(token, GOOG_PREFS_FILE);
       if (drivePrefs) { savePrefs({ ...PREFS_DEFAULTS, ...prefs, ...drivePrefs }); }
       else { await driveWrite(token, GOOG_PREFS_FILE, prefs); }
@@ -1365,10 +1374,21 @@ function App() {
   }, [prefs]);
 
   useEffect(() => {
+    // Immediately restore email badge from persistent store (visible before token check)
+    const savedUser = lsGet(GDRIVE_USER_KEY, null);
+    if (savedUser && savedUser.email) setDriveUser(savedUser);
+    // Then get/refresh a token and verify it's still accepted by Google
     getOrRefreshToken().then(tok => {
       if (!tok) return;
+      scheduleTokenRefresh();
       fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${tok}` } })
-        .then(r => r.json()).then(u => { if (u.email) setDriveUser({ email: u.email }); }).catch(() => {});
+        .then(r => r.json())
+        .then(u => {
+          if (u.email) {
+            setDriveUser({ email: u.email });
+            lsSet(GDRIVE_USER_KEY, { email: u.email });
+          }
+        }).catch(() => {});
     });
   }, []);
 
@@ -1620,8 +1640,31 @@ function App() {
           React.createElement("button", { style: S.actionBtn, onClick: () => setShowAdd(true) }, "+"),
           React.createElement("button", { style: { ...S.refreshBtn, opacity: refreshing ? 0.5 : 1 }, onClick: () => load(true), disabled: refreshing }, refreshing ? '↻…' : '↻'),
           driveUser
-            ? React.createElement("button", { title: `Synced as ${driveUser.email}`, style: { ...S.actionBtn, color: 'var(--accent)' }, onClick: reSyncDrive }, driveSyncing ? '…' : '☁')
-            : GOOG_CLIENT_ID && React.createElement("button", { title: 'Sign in with Google', style: { ...S.actionBtn, color: 'var(--text3)' }, onClick: signInWithGoogle }, driveSyncing ? '…' : '☁̲')
+            ? React.createElement("button", {
+                title: `Synced as ${driveUser.email}\nTap to re-sync`,
+                style: { background: 'none', border: 'none', padding: '2px', cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0, opacity: driveSyncing ? 0.5 : 1, transition: 'opacity 0.2s' },
+                onClick: reSyncDrive
+              },
+              React.createElement("img", {
+                src: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4Ny4zIDc4Ij48cGF0aCBkPSJtNi42IDY2Ljg1IDMuODUgNi42NWMuOCAxLjQgMS45NSAyLjUgMy4zIDMuM2wxMy43NS0yMy44aC0yNy41YzAgMS41NS40IDMuMSAxLjIgNC41eiIgZmlsbD0iIzAwNjZkYSIvPjxwYXRoIGQ9Im00My42NSAyNS0xMy43NS0yMy44Yy0xLjM1LjgtMi41IDEuOS0zLjMgMy4zbC0yNS40IDQ0YTkuMDYgOS4wNiAwIDAgMCAtMS4yIDQuNWgyNy41eiIgZmlsbD0iIzAwYWM0NyIvPjxwYXRoIGQ9Im03My41NSA3Ni44YzEuMzUtLjggMi41LTEuOSAzLjMtMy4zbDEuNi0yLjc1IDcuNjUtMTMuMjVjLjgtMS40IDEuMi0yLjk1IDEuMi00LjVoLTI3LjUwMmw1Ljg1MiAxMS41eiIgZmlsbD0iI2VhNDMzNSIvPjxwYXRoIGQ9Im00My42NSAyNSAxMy43NS0yMy44Yy0xLjM1LS44LTIuOS0xLjItNC41LTEuMmgtMTguNWMtMS42IDAtMy4xNS40NS00LjUgMS4yeiIgZmlsbD0iIzAwODMyZCIvPjxwYXRoIGQ9Im01OS44IDUzaC0zMi4zbC0xMy43NSAyMy44YzEuMzUuOCAyLjkgMS4yIDQuNSAxLjJoNTAuOGMxLjYgMCAzLjE1LS40NSA0LjUtMS4yeiIgZmlsbD0iIzI2ODRmYyIvPjxwYXRoIGQ9Im03My40IDI2LjUtMTIuNy0yMmMtLjgtMS40LTEuOTUtMi41LTMuMy0zLjNsLTEzLjc1IDIzLjggMTYuMTUgMjdoMjcuNDVjMC0xLjU1LS40LTMuMS0xLjItNC41eiIgZmlsbD0iI2ZmYmEwMCIvPjwvc3ZnPg==',
+                width: 24,
+                height: 21,
+                alt: 'Google Drive',
+                style: driveSyncing ? { animation: 'spin 1s linear infinite' } : {}
+              })
+            )
+            : GOOG_CLIENT_ID && React.createElement("button", {
+                title: 'Sign in with Google to sync',
+                style: { background: 'none', border: 'none', padding: '2px', cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0, opacity: 0.28, transition: 'opacity 0.2s' },
+                onClick: signInWithGoogle
+              },
+              React.createElement("img", {
+                src: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4Ny4zIDc4Ij48cGF0aCBkPSJtNi42IDY2Ljg1IDMuODUgNi42NWMuOCAxLjQgMS45NSAyLjUgMy4zIDMuM2wxMy43NS0yMy44aC0yNy41YzAgMS41NS40IDMuMSAxLjIgNC41eiIgZmlsbD0iIzg4OCIvPjxwYXRoIGQ9Im00My42NSAyNS0xMy43NS0yMy44Yy0xLjM1LjgtMi41IDEuOS0zLjMgMy4zbC0yNS40IDQ0YTkuMDYgOS4wNiAwIDAgMCAtMS4yIDQuNWgyNy41eiIgZmlsbD0iIzg4OCIvPjxwYXRoIGQ9Im03My41NSA3Ni44YzEuMzUtLjggMi41LTEuOSAzLjMtMy4zbDEuNi0yLjc1IDcuNjUtMTMuMjVjLjgtMS40IDEuMi0yLjk1IDEuMi00LjVoLTI3LjUwMmw1Ljg1MiAxMS41eiIgZmlsbD0iIzg4OCIvPjxwYXRoIGQ9Im00My42NSAyNSAxMy43NS0yMy44Yy0xLjM1LS44LTIuOS0xLjItNC41LTEuMmgtMTguNWMtMS42IDAtMy4xNS40NS00LjUgMS4yeiIgZmlsbD0iIzg4OCIvPjxwYXRoIGQ9Im01OS44IDUzaC0zMi4zbC0xMy43NSAyMy44YzEuMzUuOCAyLjkgMS4yIDQuNSAxLjJoNTAuOGMxLjYgMCAzLjE1LS40NSA0LjUtMS4yeiIgZmlsbD0iIzg4OCIvPjxwYXRoIGQ9Im03My40IDI2LjUtMTIuNy0yMmMtLjgtMS40LTEuOTUtMi41LTMuMy0zLjNsLTEzLjc1IDIzLjggMTYuMTUgMjdoMjcuNDVjMC0xLjU1LS40LTMuMS0xLjItNC41eiIgZmlsbD0iIzg4OCIvPjwvc3ZnPg==',
+                width: 24,
+                height: 21,
+                alt: 'Sign in with Google Drive',
+              })
+            )
         )
       ),
       // View toggle + expand/collapse controls
@@ -1795,7 +1838,7 @@ function App() {
         cacheInfo.ts && React.createElement("span", { style: { color: 'var(--text3)' } }, '· ', new Date(cacheInfo.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
       ),
       error && React.createElement("span", { style: { color: 'var(--red)' } }, "⚠ ", error),
-      driveUser && !driveSyncMsg && React.createElement("span", { style: { color: 'var(--text3)', fontSize: '10px' } }, '☁ ', driveUser.email.split('@')[0]),
+      driveUser && !driveSyncMsg && React.createElement("span", { style: { color: 'var(--text3)', fontSize: '10px' } }, driveUser.email.split('@')[0]),
       driveSyncMsg && React.createElement("span", { style: { color: 'var(--accent)', fontSize: '10px' } }, driveSyncMsg),
       React.createElement("span", { style: { marginLeft: 'auto', color: 'var(--text3)' } }, Object.keys(tags).length, " saved",
         Object.keys(tickets).length > 0 ? ` · ${Object.keys(tickets).length} 🎫` : ''
