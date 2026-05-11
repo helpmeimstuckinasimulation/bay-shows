@@ -341,7 +341,6 @@ function parseTimeStr(t) {
   return null;
 }
 
-// Format minutes since midnight → "h:MM AM/PM"
 function minsToDisplay(mins) {
   const total = ((mins % 1440) + 1440) % 1440;
   const h24 = Math.floor(total / 60);
@@ -351,21 +350,18 @@ function minsToDisplay(mins) {
   return `${h12}:${pad(m)} ${ampm}`;
 }
 
-// Format minutes since midnight → "HH:MM" (legacy)
 function minsToStr(mins) {
   const h = Math.floor(mins / 60) % 24;
   const m = mins % 60;
   return `${pad(h)}:${pad(m)}`;
 }
 
-// Is date string a Fri or Sat?
 function isWeekendDate(dateStr) {
   const [y, mo, d] = dateStr.split('-').map(Number);
   const dow = new Date(y, mo - 1, d).getDay();
   return dow === 5 || dow === 6;
 }
 
-// Infer end time. Returns minutes since midnight (may exceed 1440).
 function inferEndMins(startMins, event) {
   const numActs = Math.max(artistArray(event.a).length, 1);
   const isWeekend = isWeekendDate(event.d);
@@ -378,7 +374,6 @@ function inferEndMins(startMins, event) {
   return startMins + Math.min(numActs * 60, isWeekend ? 300 : 240);
 }
 
-// Resolve all time fields for an event.
 function eventTimings(event) {
   const showMins  = parseTimeStr(event.t_show  || null);
   const doorsMins = parseTimeStr(event.t_doors || event.t || null);
@@ -398,12 +393,10 @@ function eventTimings(event) {
   return { startMins, endMins, doorsMins, showMins, endExplicit, hasTime };
 }
 
-// Shim used by hasEnded / midpointMins / timeBucket
 function effectiveStartMins(event) {
   return eventTimings(event).startMins;
 }
 
-// Time bucket: morning 6–11:59 / matinee 12–16:59 / evening 17–20:59 / night 21+
 function timeBucket(event) {
   const h = Math.floor(effectiveStartMins(event) / 60) % 24;
   if (h >= 6  && h < 12) return 'morning';
@@ -570,7 +563,9 @@ const S = {
   sectionBtn: active => ({ fontSize: '10px', padding: '4px 10px', background: active ? 'var(--accent)' : 'transparent', color: active ? 'var(--bg)' : 'var(--text2)', letterSpacing: '0.06em', borderRight: '1px solid var(--border)' }),
   installBanner: { padding: '10px 16px', background: 'var(--bg3)', borderBottom: '1px solid var(--border)', fontSize: '11px', color: 'var(--text2)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 },
   searchBar: { padding: '7px 16px', borderBottom: '1px solid var(--border2)', background: 'var(--bg)', flexShrink: 0 },
-  searchInput: { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '20px', color: 'var(--text)', fontSize: '12px', padding: '5px 12px', outline: 'none', fontFamily: 'var(--mono)' },
+  searchWrap: { position: 'relative', display: 'flex', alignItems: 'center' },
+  searchInput: { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '20px', color: 'var(--text)', fontSize: '16px', padding: '5px 32px 5px 12px', outline: 'none', fontFamily: 'var(--mono)' },
+  searchClear: { position: 'absolute', right: '10px', fontSize: '14px', color: 'var(--text3)', lineHeight: 1, padding: '2px 4px', cursor: 'pointer' },
   moreFiltersPanel: { position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 200, background: 'var(--bg2)', borderRadius: '14px 14px 0 0', border: '1px solid var(--border)', borderBottom: 'none', padding: '16px 16px calc(16px + var(--safe-bottom))', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 -4px 32px rgba(0,0,0,0.5)' },
   jumpLinks: { display: 'flex', gap: '8px', marginLeft: 'auto' },
   jumpLink: { fontSize: '9px', color: 'var(--text3)', cursor: 'pointer', letterSpacing: '0.05em', textDecoration: 'underline', textDecorationColor: 'var(--border)', padding: '2px 0' },
@@ -1648,13 +1643,20 @@ function App() {
 
     // ── Search bar ──
     React.createElement("div", { style: S.searchBar },
-      React.createElement("input", {
-        style: S.searchInput,
-        type: 'text',
-        placeholder: '🔍 Search artists, venues, tags…',
-        value: searchQuery,
-        onChange: e => setSearchQuery(e.target.value)
-      })
+      React.createElement("div", { style: S.searchWrap },
+        React.createElement("input", {
+          style: S.searchInput,
+          type: 'text',
+          placeholder: '🔍 Search artists, venues, tags…',
+          value: searchQuery,
+          onChange: e => setSearchQuery(e.target.value)
+        }),
+        searchQuery && React.createElement("button", {
+          style: S.searchClear,
+          onClick: () => setSearchQuery(''),
+          'aria-label': 'Clear search'
+        }, "×")
+      )
     ),
 
     // ── More Filters Panel ──
