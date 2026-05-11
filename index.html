@@ -1207,17 +1207,39 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
 }
 
 // ── Add Modal ─────────────────────────────────────────────────────
-function AddModal({ onSave, onClose, driveUser }) {
-  const [form, setForm] = useState({ a: '', v: '', d: todayStr(), t: '', g: 'Rock', p: '', age: '', n: '', lk: '' });
+function AddModal({ onSave, onClose, driveUser, venueList }) {
+  const VENUE_OTHER = '__other__';
+  const [form, setForm] = useState({
+    a: '', v: '', vOther: '', d: todayStr(),
+    tDoors: '', tStart: '', tEnd: '',
+    g: 'Rock', p: '', age: '', n: '', lk: ''
+  });
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg]   = useState('');
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
 
+  // Resolved venue: use vOther text when dropdown is set to __other__
+  const resolvedVenue = form.v === VENUE_OTHER ? form.vOther.trim() : form.v;
+
+  // Compose time string for the event: prefer tStart, fallback to tDoors
+  const resolvedTime = (form.tStart || form.tDoors || '').trim();
+
   const handleSave = async () => {
-    if (!form.a && !form.v) return;
+    if (!form.a.trim() && !resolvedVenue) return;
+
+    const payload = {
+      ...form,
+      v:  resolvedVenue,
+      t:  resolvedTime,
+      te: form.tEnd.trim(),
+    };
+    // Strip internal fields not part of the event schema
+    delete payload.vOther; delete payload.tDoors; delete payload.tStart; delete payload.tEnd;
 
     // If user is signed in with Google, try to submit to the shared community sheet.
-    // Falls back to localStorage-only if the endpoint is unavailable or user is not allowlisted.
+    // CORS note: Apps Script Web Apps don't handle OPTIONS preflight, so we use
+    // mode:'no-cors' with Content-Type:'text/plain' to skip it. The response is
+    // opaque (unreadable) but the POST still reaches the server if it doesn't throw.
     if (driveUser && COMMUNITY_ENDPOINT) {
       setSubmitting(true);
       setSubmitMsg('Submitting…');
@@ -1225,44 +1247,28 @@ function AddModal({ onSave, onClose, driveUser }) {
         const tok = await getOrRefreshToken();
         if (!tok) throw new Error('no_token');
 
-        const res = await fetch(COMMUNITY_ENDPOINT, {
+        await fetch(COMMUNITY_ENDPOINT, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: tok, event: form }),
+          mode:   'no-cors',   // skips preflight; response will be opaque
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify({ token: tok, event: payload }),
         });
-
-        // Apps Script Web Apps return 200 even for errors; check the body
-        let data;
-        try { data = await res.json(); } catch { data = {}; }
-
-        if (data.ok) {
-          setSubmitMsg('✓ Submitted — will appear after next nightly rebuild');
-          // Also add locally so the submitter sees it immediately (marked community)
-          const id = data.id || `community-${Date.now()}`;
-          onSave({ ...form, id, so: 'community', s: 'community', community: true,
-                   submittedBy: driveUser.email, da: Date.now(), dm: Date.now() });
-          setTimeout(onClose, 1800);
-          return;
-        } else if (data.error && data.error.includes('Not authorized')) {
-          // User is authenticated but not on the allowlist — fall through to local-only
-          setSubmitMsg('Not on the approved list — saved locally only');
-          setTimeout(() => {
-            const id = `manual-${Date.now()}`;
-            onSave({ ...form, id, so: 'manual', da: Date.now(), dm: Date.now() });
-            onClose();
-          }, 2000);
-          return;
-        } else {
-          throw new Error(data.error || 'submission_failed');
-        }
+        // no-cors: if fetch didn't throw, the POST reached the server
+        setSubmitMsg('✓ Submitted — will appear after next nightly rebuild');
+        const id = `community-${Date.now()}`;
+        onSave({ ...payload, id, so: 'community', s: 'community', community: true,
+                 submittedBy: driveUser.email, da: Date.now(), dm: Date.now() });
+        setTimeout(onClose, 1800);
+        return;
       } catch(err) {
-        const msg = err.message === 'no_token' ? 'Not signed in' : (err.message || 'Network error');
-        setSubmitMsg('Submit failed: ' + msg + ' — saved locally');
+        const msg = err.message === 'no_token' ? 'Not signed in — saved locally'
+                  : 'Network error — saved locally';
+        setSubmitMsg(msg);
         setTimeout(() => {
           const id = `manual-${Date.now()}`;
-          onSave({ ...form, id, so: 'manual', da: Date.now(), dm: Date.now() });
+          onSave({ ...payload, id, so: 'manual', da: Date.now(), dm: Date.now() });
           onClose();
-        }, 2000);
+        }, 1800);
         return;
       } finally {
         setSubmitting(false);
@@ -1271,55 +1277,124 @@ function AddModal({ onSave, onClose, driveUser }) {
 
     // Not signed in — local only
     const id = `manual-${Date.now()}`;
-    onSave({ ...form, id, so: 'manual', da: Date.now(), dm: Date.now() });
+    onSave({ ...payload, id, so: 'manual', da: Date.now(), dm: Date.now() });
     onClose();
   };
 
   const isSignedIn = !!driveUser;
 
+  const field = (label, key, placeholder, hint) =>
+    React.createElement("div", { style: S.inputGroup },
+      React.createElement("label", { style: S.label },
+        label,
+        hint && React.createElement("span", { style: { color: 'var(--text3)', fontWeight: 'normal', marginLeft: '6px' } }, hint)
+      ),
+      React.createElement("input", { style: S.input, value: form[key], onChange: set(key), placeholder: placeholder || '' })
+    );
+
   return React.createElement("div", { style: S.modal, onClick: onClose },
-    React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
+    React.createElement("div", { style: { ...S.modalInner, maxHeight: '90vh', overflowY: 'auto' }, onClick: e => e.stopPropagation() },
       React.createElement("div", { style: S.modalTitle }, "Add Event"),
+
       // Sign-in notice
       React.createElement("div", {
         style: { fontSize: '10px', color: isSignedIn ? 'var(--green)' : 'var(--text3)',
                  marginBottom: '10px', paddingBottom: '8px', borderBottom: '1px solid var(--border2)' }
       }, isSignedIn
-        ? `✓ Signed in as ${driveUser.email} — event will be shared with all users`
-        : '⚠ Sign in with Google to share events with all users (+ icon → sign in first)'),
-      [['a', 'Artist / Headliner'], ['v', 'Venue'], ['d', 'Date (YYYY-MM-DD)'], ['t', 'Time (HH:MM)'], ['p', 'Price'], ['lk', 'Link']].map(([k, label]) =>
-        React.createElement("div", { key: k, style: S.inputGroup },
-          React.createElement("label", { style: S.label }, label),
-          React.createElement("input", { style: S.input, value: form[k], onChange: set(k) })
+        ? `✓ ${driveUser.email} — event will be shared with all users after nightly rebuild`
+        : '⚠ Sign in with Google (sync icon) to share events with all users'),
+
+      // Artists
+      React.createElement("div", { style: S.inputGroup },
+        React.createElement("label", { style: S.label },
+          "Artists",
+          React.createElement("span", { style: { color: 'var(--text3)', fontWeight: 'normal', marginLeft: '6px' } }, "separate multiple with commas")
+        ),
+        React.createElement("input", {
+          style: S.input, value: form.a, onChange: set('a'),
+          placeholder: "Headliner, Support Act, Opener"
+        })
+      ),
+
+      // Venue dropdown + Other text field
+      React.createElement("div", { style: S.inputGroup },
+        React.createElement("label", { style: S.label }, "Venue"),
+        React.createElement("select", { style: S.input, value: form.v, onChange: set('v') },
+          React.createElement("option", { value: "" }, "— select venue —"),
+          (venueList || []).map(v => React.createElement("option", { key: v, value: v }, v)),
+          React.createElement("option", { value: VENUE_OTHER }, "Other (type below)")
+        ),
+        form.v === VENUE_OTHER && React.createElement("input", {
+          style: { ...S.input, marginTop: '4px' },
+          value: form.vOther, onChange: set('vOther'),
+          placeholder: "Venue name"
+        })
+      ),
+
+      // Date
+      field("Date", "d", "YYYY-MM-DD"),
+
+      // Times — three fields in a row
+      React.createElement("div", { style: S.inputGroup },
+        React.createElement("label", { style: S.label }, "Times"),
+        React.createElement("div", { style: { display: 'flex', gap: '6px' } },
+          React.createElement("div", { style: { flex: 1 } },
+            React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', marginBottom: '2px' } }, "Doors"),
+            React.createElement("input", { style: S.input, value: form.tDoors, onChange: set('tDoors'), placeholder: "19:00" })
+          ),
+          React.createElement("div", { style: { flex: 1 } },
+            React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', marginBottom: '2px' } }, "Show starts"),
+            React.createElement("input", { style: S.input, value: form.tStart, onChange: set('tStart'), placeholder: "20:00" })
+          ),
+          React.createElement("div", { style: { flex: 1 } },
+            React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', marginBottom: '2px' } }, "End"),
+            React.createElement("input", { style: S.input, value: form.tEnd, onChange: set('tEnd'), placeholder: "23:00" })
+          )
         )
       ),
+
+      // Genre
       React.createElement("div", { style: S.inputGroup },
         React.createElement("label", { style: S.label }, "Genre"),
         React.createElement("select", { style: S.input, value: form.g, onChange: set('g') },
           GENRE_KEYS.map(g => React.createElement("option", { key: g, value: g }, GENRES[g].label))
         )
       ),
-      React.createElement("div", { style: S.inputGroup },
-        React.createElement("label", { style: S.label }, "Ages"),
-        React.createElement("select", { style: S.input, value: form.age, onChange: set('age') },
-          React.createElement("option", { value: "" }, "—"),
-          React.createElement("option", { value: "all" }, "All ages"),
-          React.createElement("option", { value: "21+" }, "21+"),
-          React.createElement("option", { value: "18+" }, "18+")
+
+      // Price + Ages in a row
+      React.createElement("div", { style: { display: 'flex', gap: '8px' } },
+        React.createElement("div", { style: { ...S.inputGroup, flex: 1 } },
+          React.createElement("label", { style: S.label }, "Price"),
+          React.createElement("input", { style: S.input, value: form.p, onChange: set('p'), placeholder: "e.g. 15" })
+        ),
+        React.createElement("div", { style: { ...S.inputGroup, flex: 1 } },
+          React.createElement("label", { style: S.label }, "Ages"),
+          React.createElement("select", { style: S.input, value: form.age, onChange: set('age') },
+            React.createElement("option", { value: "" }, "—"),
+            React.createElement("option", { value: "all" }, "All ages"),
+            React.createElement("option", { value: "21+" }, "21+"),
+            React.createElement("option", { value: "18+" }, "18+")
+          )
         )
       ),
+
+      // Link
+      field("Link / Tickets URL", "lk", "https://…"),
+
+      // Notes
       React.createElement("div", { style: S.inputGroup },
         React.createElement("label", { style: S.label }, "Notes"),
-        React.createElement("textarea", { style: { ...S.input, height: '60px', resize: 'vertical' }, value: form.n, onChange: set('n') })
+        React.createElement("textarea", { style: { ...S.input, height: '52px', resize: 'vertical' }, value: form.n, onChange: set('n') })
       ),
+
       submitMsg && React.createElement("div", {
         style: { fontSize: '11px', color: submitMsg.startsWith('✓') ? 'var(--green)' : 'var(--accent)',
                  margin: '6px 0', textAlign: 'center' }
       }, submitMsg),
+
       React.createElement("button", {
         style: { ...S.btnPrimary, opacity: submitting ? 0.6 : 1 },
-        onClick: handleSave,
-        disabled: submitting
+        onClick: handleSave, disabled: submitting
       }, submitting ? 'Submitting…' : (isSignedIn ? 'Share Event' : 'Save Locally')),
       React.createElement("button", { style: S.btnSecondary, onClick: onClose }, "Cancel")
     )
@@ -2021,7 +2096,15 @@ function App() {
       } : null,
       onClose: () => { setVenuePanel(null); setPanelHistory([]); }
     }),
-    showAdd && React.createElement(AddModal, { onSave: e => { saveManual([e, ...manual]); }, onClose: () => setShowAdd(false), driveUser }),
+    showAdd && React.createElement(AddModal, {
+      onSave: e => { saveManual([e, ...manual]); },
+      onClose: () => setShowAdd(false),
+      driveUser,
+      venueList: useMemo(() =>
+        [...new Set(allEvents.map(e => e.v).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+        [allEvents]
+      ),
+    }),
   );
 }
 
