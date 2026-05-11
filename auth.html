@@ -1,113 +1,1917 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bay Shows — Signing in…</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Bay Shows">
+  <meta name="description" content="Bay Area live music — daily-updated shows from riotlist + 19hz">
+  <title>Bay Shows</title>
+  <link rel="manifest" href="/bay-shows/manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,300;1,400&display=swap" rel="stylesheet">
+  <link rel="apple-touch-icon" href="/bay-shows/icon-192.svg">
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      background: #0a0a0f;
-      color: #e0e0f0;
-      font-family: 'JetBrains Mono', monospace;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      gap: 16px;
-      padding: 24px;
-      text-align: center;
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #0a0a0f;
+      --bg2:      #111118;
+      --bg3:      #18181f;
+      --border:   #2a2a35;
+      --border2:  #1e1e28;
+      --text:     #e2e2e8;
+      --text2:    #8888a0;
+      --text3:    #555568;
+      --accent:   #e8ff47;
+      --accent2:  #b8cc30;
+      --red:      #ff4d4d;
+      --green:    #47ff8e;
+      --blue:     #47b8ff;
+      --mono:     'JetBrains Mono', monospace;
+      --radius:   4px;
+      --safe-top:    env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
     }
-    .icon  { font-size: 36px; }
-    .title { font-size: 14px; color: #a0a0c0; letter-spacing: 0.05em; }
-    .status { font-size: 12px; color: #6060a0; margin-top: 4px; min-height: 18px; }
-    .error { color: #ff6060; font-size: 11px; max-width: 300px; line-height: 1.5; }
-    .btn {
-      margin-top: 8px;
-      padding: 8px 20px;
-      background: transparent;
-      border: 1px solid #5b6cff;
-      color: #5b6cff;
-      font-family: inherit;
-      font-size: 11px;
-      border-radius: 4px;
-      cursor: pointer;
-      letter-spacing: 0.05em;
-    }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+    #root { height: 100%; }
+    a { color: inherit; text-decoration: none; }
+    button { font-family: var(--mono); cursor: pointer; border: none; background: none; color: inherit; }
+    input, select, textarea { font-family: var(--mono); }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
   </style>
 </head>
 <body>
-  <div class="icon">☁</div>
-  <div class="title">BAY SHOWS</div>
-  <div class="status" id="status">Connecting…</div>
-  <div class="error" id="error" style="display:none"></div>
-  <button class="btn" id="retryBtn" style="display:none" onclick="startAuth()">Try Again</button>
-  <button class="btn" id="closeBtn" style="display:none" onclick="window.close()">Close Tab</button>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
   <script>
-    const WORKER_BASE     = 'https://bay-shows-auth.dranahan.workers.dev';
-    const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
+// ─────────────────────────────────────────────────────────────────
+// BAY SHOWS PWA  v16 — index.html embedded app
+// ─────────────────────────────────────────────────────────────────
 
-    function setStatus(msg) { document.getElementById('status').textContent = msg; }
-    function showError(msg) {
-      setStatus('');
-      const el = document.getElementById('error');
-      el.textContent = msg;
-      el.style.display = 'block';
-      document.getElementById('retryBtn').style.display = 'inline-block';
+const {
+  useState, useEffect, useRef, useCallback, useMemo
+} = React;
+
+// ── Constants ────────────────────────────────────────────────────
+// v2.15: bay_shows_merged is served by an Apps Script Web App (doGet).
+// Deploy the script as a Web App (Execute as: Me, Access: Anyone) and paste the URL below.
+// No OAuth required to load events — sign-in is only for prefs/tags cloud sync.
+const WEB_APP_URL  = 'https://script.google.com/macros/s/AKfycbxLSoBZ5I7qiAIL_vJ7WtMueB-y7tXZ5cq2TF4YK40_c_mJ8Mw1xEje-aRL96M54KcfiQ/exec';  // ← paste Apps Script Web App URL here after deploying
+const CACHE_KEY    = 'bay-events-cache-v1';
+const TAGS_KEY     = 'bay-events-tags-v9';
+const SNAP_KEY     = 'bay-events-snap-v9';
+const MANUAL_KEY   = 'bay-events-manual-v9';
+const PREFS_KEY    = 'bay-prefs-v18';
+const HIDDEN_KEY   = 'bay-hidden-v1';   // { [eventId]: epochMs }
+const TICKETS_KEY  = 'bay-tickets-v1';  // { [eventId]: epochMs }
+const DJ_OVERRIDE_KEY = 'bay-dj-override-v1'; // { [eventId]: 'live'|'dj' }
+const TTL_MS       = 6 * 60 * 60 * 1000;
+
+const GOOG_CLIENT_ID  = '1030489561991-kbu11qmn3o58ahu69d27f3g09qhai1ns.apps.googleusercontent.com';
+const GOOG_SCOPE      = 'https://www.googleapis.com/auth/drive.file';
+const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
+const GDRIVE_USER_KEY = 'bay-gdrive-user-v1';   // { email } — survives token expiry
+const GOOG_PREFS_FILE = 'bay_shows_prefs.json';
+const GOOG_TAGS_FILE  = 'bay_shows_tags.json';
+const GDRIVE_FILEID_KEY = 'bay-gdrive-fileid-v1';
+
+// ── Auth Worker base URL (same Worker that handles /auth callback) ──
+// The Worker must expose GET /refresh which calls Google's token endpoint
+// using its stored refresh token and returns { access_token, expires_in }.
+const WORKER_BASE = 'https://bay-shows-auth.dranahan.workers.dev';
+
+const _driveFileIds = (() => {
+  try { return JSON.parse(localStorage.getItem(GDRIVE_FILEID_KEY) || '{}'); } catch { return {}; }
+})();
+function _saveFileIdCache() {
+  try { localStorage.setItem(GDRIVE_FILEID_KEY, JSON.stringify(_driveFileIds)); } catch {}
+}
+
+// Return a fresh stored token, or null if missing/expired (within 60s buffer).
+const getStoredToken = () => {
+  const t = lsGet(GDRIVE_AUTH_KEY, null);
+  if (!t || !t.access_token || !t.expires_at) return null;
+  if (Date.now() > t.expires_at - 60000) return null;
+  return t;
+};
+
+// Ask the Cloudflare Worker to mint a new access token using its server-side
+// refresh token. The Worker owns the refresh token — the browser never sees it.
+// Returns the new access_token string, or throws on failure.
+const refreshViaWorker = async () => {
+  const resp = await fetch(`${WORKER_BASE}/refresh`, { credentials: 'include' });
+  if (!resp.ok) throw new Error(`refresh_failed:${resp.status}`);
+  const data = await resp.json();
+  if (!data.access_token) throw new Error('refresh_no_token');
+  const tokenData = {
+    access_token: data.access_token,
+    expires_at: Date.now() + ((data.expires_in || 3600) * 1000),
+  };
+  lsSet(GDRIVE_AUTH_KEY, tokenData);
+  return data.access_token;
+};
+
+// Get a valid token: use stored if fresh, try Worker refresh if we have prior
+// auth evidence, otherwise optionally open the full auth tab.
+const getOrRefreshToken = async (openTabFallback = false) => {
+  const stored = getStoredToken();
+  if (stored) return stored.access_token;
+  // If we have any stale token record, the user consented before — try Worker refresh
+  const stale = lsGet(GDRIVE_AUTH_KEY, null);
+  if (stale && stale.access_token) {
+    try { return await refreshViaWorker(); } catch {}
+  }
+  if (openTabFallback) return openAuthTab();
+  return null;
+};
+
+// Schedule a proactive token refresh 5 minutes before expiry so the session
+// self-heals while the app is open without waiting for a Drive op to fail.
+let _refreshTimer = null;
+const scheduleTokenRefresh = () => {
+  if (_refreshTimer) clearTimeout(_refreshTimer);
+  const t = lsGet(GDRIVE_AUTH_KEY, null);
+  if (!t || !t.expires_at) return;
+  const delay = t.expires_at - Date.now() - 5 * 60 * 1000;
+  if (delay <= 0) return;
+  _refreshTimer = setTimeout(async () => {
+    try { await refreshViaWorker(); scheduleTokenRefresh(); } catch {}
+  }, delay);
+};
+
+// Open auth.html in a new tab and poll until a valid token appears in localStorage.
+const openAuthTab = () => new Promise((resolve, reject) => {
+  const authUrl = window.location.origin + window.location.pathname.replace(/[^/]*$/, '') + 'auth.html';
+  const tab = window.open(authUrl, '_blank');
+  if (!tab) { reject(new Error('popup_blocked')); return; }
+  const startTime = Date.now();
+  const TIMEOUT_MS = 5 * 60 * 1000;
+  const poll = setInterval(() => {
+    const t = lsGet(GDRIVE_AUTH_KEY, null);
+    const found = t && t.access_token ? t : null;
+    if (found) { clearInterval(poll); resolve(found.access_token); return; }
+    if (tab.closed) {
+      clearInterval(poll);
+      const final = lsGet(GDRIVE_AUTH_KEY, null);
+      if (final && final.access_token) { resolve(final.access_token); return; }
+      reject(new Error('Tab closed without completing sign-in'));
+      return;
     }
-    function showSuccess() {
-      setStatus('Signed in ✓ — returning to app…');
-      document.getElementById('closeBtn').style.display = 'inline-block';
+    if (Date.now() - startTime > TIMEOUT_MS) {
+      clearInterval(poll);
+      try { tab.close(); } catch {}
+      reject(new Error('Sign-in timed out'));
     }
+  }, 500);
+});
 
-    function startAuth() {
-      document.getElementById('error').style.display = 'none';
-      document.getElementById('retryBtn').style.display = 'none';
-      document.getElementById('closeBtn').style.display = 'none';
-      setStatus('Redirecting to Google…');
-      window.location.href = `${WORKER_BASE}/auth`;
-    }
+async function driveFileId(token, filename) {
+  if (_driveFileIds[filename]) return _driveFileIds[filename];
+  const q = encodeURIComponent(`name='${filename}' and trashed=false`);
+  const r = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const data = await r.json();
+  if (data.files && data.files.length > 0) {
+    _driveFileIds[filename] = data.files[0].id;
+    _saveFileIdCache();
+    return data.files[0].id;
+  }
+  const cr = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: filename, mimeType: 'application/json' })
+  });
+  const file = await cr.json();
+  _driveFileIds[filename] = file.id;
+  _saveFileIdCache();
+  return file.id;
+}
 
-    function handleReturn() {
-      const params     = new URLSearchParams(window.location.search);
-      const token      = params.get('access_token');
-      const expiresIn  = parseInt(params.get('expires_in') || '3600', 10);
-      const error      = params.get('error');
+async function driveRead(token, filename) {
+  const fileId = await driveFileId(token, filename);
+  const r = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (r.status === 204 || r.headers.get('content-length') === '0') return null;
+  try { return await r.json(); } catch { return null; }
+}
 
-      if (error) {
-        const messages = {
-          'google_error:access_denied': 'Sign-in cancelled.',
-          'invalid_state':              'Session expired — please try again.',
-          'token_exchange_failed':      'Google token exchange failed. Try again.',
-        };
-        showError(messages[error] || `Sign-in error: ${error}`);
-        return;
+async function driveWrite(token, filename, obj) {
+  const fileId = await driveFileId(token, filename);
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify({ mimeType: 'application/json' })], { type: 'application/json' }));
+  form.append('file', new Blob([JSON.stringify(obj)], { type: 'application/json' }));
+  await fetch(
+    `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`,
+    { method: 'PATCH', headers: { Authorization: `Bearer ${token}` }, body: form }
+  );
+}
+
+function mergeTags(local, remote) {
+  if (!remote) return local;
+  const merged = { ...remote };
+  Object.entries(local).forEach(([id, ts]) => {
+    if (!merged[id] || ts > merged[id]) merged[id] = ts;
+  });
+  return merged;
+}
+
+function debounce(fn, ms) {
+  let timer;
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+}
+
+// ── localStorage helpers ─────────────────────────────────────────
+const lsGet = (key, fallback = null) => {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+};
+const lsSet = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} };
+
+// ── Artist name helper ───────────────────────────────────────────
+const fmtA = (a) => {
+  if (!a) return '';
+  if (Array.isArray(a)) return a.join(' · ');
+  return String(a);
+};
+
+const artistArray = (a) => {
+  if (!a) return [];
+  if (Array.isArray(a)) return a;
+  return [String(a)];
+};
+
+// ── Genre taxonomy ───────────────────────────────────────────────
+const GENRES = {
+  'Electronic':           { label: 'Electronic',        color: '#5b6cff' },
+  'Hip-Hop/R&B':          { label: 'Hip-Hop / R&B',     color: '#e07b3d' },
+  'Indie/Alt':            { label: 'Indie / Alt',        color: '#9c6bd6' },
+  'Rock':                 { label: 'Rock',               color: '#c2410c' },
+  'Punk/HC':              { label: 'Punk / HC',          color: '#dc2626' },
+  'Metal':                { label: 'Metal',              color: '#525252' },
+  'Folk/Americana':       { label: 'Folk / Americana',   color: '#a16207' },
+  'Jazz/Soul':            { label: 'Jazz / Soul',        color: '#0891b2' },
+  'Latin':                { label: 'Latin',              color: '#db2777' },
+  'Reggae/Ska':           { label: 'Reggae / Ska',       color: '#16a34a' },
+  'Noise/Experimental':   { label: 'Noise / Exp',        color: '#7c3aed' },
+  'Ambient':              { label: 'Ambient',            color: '#0d9488' },
+  'Classical':            { label: 'Classical',          color: '#7e22ce' },
+  'Comedy':               { label: 'Comedy',             color: '#ca8a04' },
+  'other':                { label: 'Other',              color: '#888899' },
+};
+
+const SUBGENRES_BY_TOP = {
+  'Electronic':         ['Bass', 'Club/Global', 'Disco/Funk', 'EDM/Dance Pop', 'House', 'Synthwave/EBM', 'Techno', 'Trance/Hard Dance'],
+  'Hip-Hop/R&B':        ['Hip-Hop', 'Lo-fi/Downtempo', 'R&B/Soul', 'Trap'],
+  'Indie/Alt':          ['Indie Electronic', 'Indie Pop', 'Indie Rock', 'Post-punk/Goth Rock', 'Shoegaze/Dream Pop'],
+  'Rock':               ['Alt-Metal/Crossover', 'Classic/Hard Rock', 'Prog/Art Rock', 'Psych/Garage'],
+  'Punk/HC':            ['Grindcore/Powerviolence', 'Hardcore', 'Post-Hardcore/Emo', 'Punk', 'Ska Punk/Skate'],
+  'Metal':              ['Black/Death Metal', 'Doom/Sludge/Stoner', 'Metalcore/Deathcore', 'Prog/Power Metal', 'Thrash'],
+  'Folk/Americana':     ['Americana/Country', 'Bluegrass/Roots', 'Folk', 'Singer-Songwriter', 'World Folk'],
+  'Jazz/Soul':          ['Blues', 'Gospel', 'Jazz', 'Soul'],
+  'Latin':              ['Cumbia', 'Latin Electronic', 'Latin Rock/Indie', 'Reggaetón/Perreo'],
+  'Reggae/Ska':         ['Dub', 'Reggae/Dancehall', 'Ska'],
+  'Noise/Experimental': ['Drone', 'IDM/Glitch', 'Industrial', 'Live A/V', 'Noise', 'Power Electronics'],
+  'Ambient':            ['Ambient', 'Dungeon Synth', 'New Age/Meditative'],
+  'Classical':          ['Chamber/Crossover', 'Classical', 'Contemporary Classical'],
+  'Comedy':             ['Comedy'],
+};
+
+const GENRE_KEYS = Object.keys(GENRES).filter(k => k !== 'other');
+
+const resolveGenre = (g) => {
+  if (!g) return 'other';
+  const arr = Array.isArray(g) ? g : [g];
+  for (const raw of arr) {
+    if (GENRES[raw]) return raw;
+    const found = Object.keys(GENRES).find(k => k.toLowerCase() === raw.toLowerCase().trim());
+    if (found) return found;
+  }
+  return 'other';
+};
+
+// ── Regions ──────────────────────────────────────────────────────
+const REGIONS = {
+  'SF':                 'San Francisco',
+  'East Bay':           'Oakland / East Bay',
+  'Peninsula/South Bay':'Peninsula / South Bay',
+  'North Bay':          'Marin / North Bay',
+  'Santa Cruz':         'Santa Cruz',
+};
+const fmtRegion = (r) => REGIONS[r] || r || '';
+const fmtSg = (sg) => {
+  if (!sg) return '';
+  if (Array.isArray(sg)) return sg.filter(Boolean).map(s => String(s).trim()).filter(Boolean).join(', ');
+  return String(sg).trim();
+};
+
+// ── DJ classification ────────────────────────────────────────────
+// All 19hz events are treated as DJ/club by default.
+// Manual override (per-event 'mark live' / 'mark DJ') always wins.
+function classifyDJ(event, djOverrides) {
+  const override = djOverrides && djOverrides[event.id];
+  if (override === 'live') return false;
+  if (override === 'dj') return true;
+  return event.s === '19hz';
+}
+
+// ── Time / end-time inference ─────────────────────────────────────
+const pad = n => String(n).padStart(2, '0');
+
+// Parse "HH:MM" or "H:MM" → minutes since midnight, or null
+function parseTimeStr(t) {
+  if (!t) return null;
+  const s = String(t).trim().toLowerCase();
+  const bare = s.match(/^(\d{1,2})(am|pm)$/);
+  if (bare) {
+    let h = parseInt(bare[1]);
+    const isPM = bare[2] === 'pm';
+    if (h === 12) h = isPM ? 12 : 0;
+    else if (isPM) h += 12;
+    return h * 60;
+  }
+  const hm12 = s.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/);
+  if (hm12) {
+    let h = parseInt(hm12[1]);
+    const m = parseInt(hm12[2]);
+    const isPM = hm12[3] === 'pm';
+    if (h === 12) h = isPM ? 12 : 0;
+    else if (isPM) h += 12;
+    return h * 60 + m;
+  }
+  const hm24 = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (hm24) return parseInt(hm24[1]) * 60 + parseInt(hm24[2]);
+  return null;
+}
+
+function minsToDisplay(mins) {
+  const total = ((mins % 1440) + 1440) % 1440;
+  const h24 = Math.floor(total / 60);
+  const m   = total % 60;
+  const ampm = h24 < 12 ? 'AM' : 'PM';
+  const h12  = h24 % 12 || 12;
+  return `${h12}:${pad(m)} ${ampm}`;
+}
+
+function minsToStr(mins) {
+  const h = Math.floor(mins / 60) % 24;
+  const m = mins % 60;
+  return `${pad(h)}:${pad(m)}`;
+}
+
+function isWeekendDate(dateStr) {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const dow = new Date(y, mo - 1, d).getDay();
+  return dow === 5 || dow === 6;
+}
+
+function inferEndMins(startMins, event) {
+  const numActs = Math.max(artistArray(event.a).length, 1);
+  const isWeekend = isWeekendDate(event.d);
+  const isDJ = event._isDJ;
+  if (isDJ) return startMins + (isWeekend ? 5 * 60 : 4 * 60);
+  const h = Math.floor(startMins / 60) % 24;
+  if (h < 12) return startMins + Math.min(numActs * 45, 150);
+  if (h < 17) return startMins + Math.min(numActs * 50, 180);
+  if (h < 21) return startMins + Math.min(numActs * 60 + 30, isWeekend ? 240 : 210);
+  return startMins + Math.min(numActs * 60, isWeekend ? 300 : 240);
+}
+
+function eventTimings(event) {
+  const showMins  = parseTimeStr(event.t_show  || null);
+  const doorsMins = parseTimeStr(event.t_doors || event.t || null);
+  const endParsed = parseTimeStr(event.te || null);
+  const startMins = showMins  !== null ? showMins
+                  : doorsMins !== null ? doorsMins
+                  : 19 * 60;
+  const hasTime = showMins !== null || doorsMins !== null;
+  let endMins, endExplicit;
+  if (endParsed !== null) {
+    endMins = endParsed <= startMins ? endParsed + 1440 : endParsed;
+    endExplicit = true;
+  } else {
+    endMins = inferEndMins(startMins, event);
+    endExplicit = false;
+  }
+  return { startMins, endMins, doorsMins, showMins, endExplicit, hasTime };
+}
+
+function effectiveStartMins(event) {
+  return eventTimings(event).startMins;
+}
+
+function timeBucket(event) {
+  const h = Math.floor(effectiveStartMins(event) / 60) % 24;
+  if (h >= 6  && h < 12) return 'morning';
+  if (h >= 12 && h < 17) return 'matinee';
+  if (h >= 17 && h < 21) return 'evening';
+  return 'night';
+}
+
+const timeBucketLabel = {
+  'morning': '🌅 Morning',
+  'matinee': '☀️ Matinee',
+  'evening': '🌆 Evening',
+  'night':   '🌙 Night',
+};
+const TB_ORDER = ['morning', 'matinee', 'evening', 'night'];
+
+function hasEnded(event) {
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const tStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+  if (event.d > tStr) return false;
+  if (event.d < tStr) return true;
+  const { endMins } = eventTimings(event);
+  if (endMins >= 1440) return false;
+  return nowMins > endMins;
+}
+
+function midpointMins(event) {
+  const { startMins, endMins } = eventTimings(event);
+  return (startMins + endMins) / 2;
+}
+
+// ── Data fetch ────────────────────────────────────────────────────
+// ── Data fetch ────────────────────────────────────────────────────
+// v2.15: events are served by an Apps Script Web App (doGet) which reads
+// bay_shows_merged and returns it with CORS headers. No OAuth required —
+// the Web App runs as the script owner and is publicly accessible.
+// Google sign-in is only for prefs/tags cloud sync.
+async function fetchEvents() {
+  const cached = lsGet(CACHE_KEY);
+  if (cached && cached.ts && Date.now() - cached.ts < TTL_MS && Array.isArray(cached.events)) {
+    return { events: cached.events, meta: cached.meta || null, artistLinks: cached.artistLinks || {}, fromCache: true, ts: cached.ts };
+  }
+  if (!WEB_APP_URL) throw new Error('WEB_APP_URL not configured in index.html');
+  const resp = await fetch(WEB_APP_URL);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const text = await resp.text();
+  const trimmed = text.replace(/^\uFEFF/, '').trim();
+  let events, meta = null, artistLinks = {};
+  const objStart = trimmed.indexOf('{');
+  if (objStart !== -1) {
+    try {
+      const parsed = JSON.parse(trimmed.slice(objStart));
+      if (parsed.error) throw new Error('Web App error: ' + parsed.error);
+      if (parsed._meta && Array.isArray(parsed.events)) { meta = parsed._meta; events = parsed.events; artistLinks = parsed.artistLinks || {}; }
+    } catch(e) { if (String(e.message).startsWith('Web App')) throw e; }
+  }
+  if (!events) {
+    const arrStart = trimmed.indexOf('[');
+    const arrEnd = trimmed.lastIndexOf(']');
+    if (arrStart === -1 || arrEnd === -1) throw new Error('No JSON found in Web App response');
+    events = JSON.parse(trimmed.slice(arrStart, arrEnd + 1));
+  }
+  const ts = Date.now();
+  lsSet(CACHE_KEY, { events, meta, artistLinks, ts });
+  return { events, meta, artistLinks, fromCache: false, ts };
+}
+
+// ── Date helpers ──────────────────────────────────────────────────
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+const dateLabel = dateStr => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${days[dt.getDay()]} ${months[m - 1]} ${d}`;
+};
+const isNew = event => {
+  const snap = lsGet(SNAP_KEY, {});
+  return snap && !snap[event.id];
+};
+const gcalUrl = event => {
+  const base = 'https://calendar.google.com/calendar/render?action=TEMPLATE';
+  const title = encodeURIComponent(`${fmtA(event.a) || event.v} @ ${event.v}`);
+  const loc = encodeURIComponent(event.v);
+  const dt = event.d ? event.d.replace(/-/g, '') : '';
+  const params = `&text=${title}&location=${loc}&dates=${dt}/${dt}`;
+  return base + params;
+};
+
+// ── Week/month navigation helpers ────────────────────────────────
+function nextDayKey(currentDay, dayKeys) {
+  const idx = dayKeys.indexOf(currentDay);
+  return idx >= 0 && idx < dayKeys.length - 1 ? dayKeys[idx + 1] : null;
+}
+function nextWeekKey(currentDay, dayKeys) {
+  // Next Monday on or after (currentDay + 1)
+  const [y, m, d] = currentDay.split('-').map(Number);
+  const cur = new Date(y, m - 1, d);
+  let target = new Date(cur);
+  target.setDate(target.getDate() + 1);
+  // Advance to next Monday
+  while (target.getDay() !== 1) target.setDate(target.getDate() + 1);
+  const targetStr = `${target.getFullYear()}-${pad(target.getMonth()+1)}-${pad(target.getDate())}`;
+  // Find the first dayKey >= targetStr
+  return dayKeys.find(k => k >= targetStr) || null;
+}
+function nextMonthKey(currentDay, dayKeys) {
+  const [y, m] = currentDay.split('-').map(Number);
+  let nm = m + 1, ny = y;
+  if (nm > 12) { nm = 1; ny++; }
+  const targetStr = `${ny}-${pad(nm)}-01`;
+  return dayKeys.find(k => k >= targetStr) || null;
+}
+
+// ── Styles ────────────────────────────────────────────────────────
+const S = {
+  app: { display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)', overflow: 'hidden', alignItems: 'center' },
+  appInner: { display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '860px', height: '100%', overflow: 'hidden' },
+  header: { padding: '12px 16px 10px', borderBottom: '1px solid var(--border2)', paddingTop: 'calc(12px + var(--safe-top))', background: 'var(--bg)', flexShrink: 0, zIndex: 10 },
+  headerRow: { display: 'flex', alignItems: 'center', gap: '10px' },
+  logo: { fontSize: '22px', lineHeight: 1, color: 'var(--accent)', flexShrink: 0 },
+  title: { fontSize: '16px', fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text)', flex: 1 },
+  subtitle: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.06em' },
+  refreshBtn: { fontSize: '11px', color: 'var(--text2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '4px 8px', flexShrink: 0 },
+  filters: { overflowX: 'auto', padding: '8px 16px', borderBottom: '1px solid var(--border2)', display: 'flex', gap: '6px', flexShrink: 0, background: 'var(--bg)', scrollbarWidth: 'none' },
+  filterChip: active => ({ fontSize: '10px', padding: '3px 8px', borderRadius: '20px', border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`, color: active ? 'var(--bg)' : 'var(--text2)', background: active ? 'var(--accent)' : 'transparent', cursor: 'pointer', whiteSpace: 'nowrap', letterSpacing: '0.05em', transition: 'all 0.12s' }),
+  genreChip: (color, active) => ({ fontSize: '10px', padding: '3px 8px', borderRadius: '20px', border: `1px solid ${active ? color : 'var(--border)'}`, color: active ? 'var(--bg)' : color, background: active ? color : 'transparent', cursor: 'pointer', whiteSpace: 'nowrap', letterSpacing: '0.04em', transition: 'all 0.12s' }),
+  scroll: { flex: 1, overflowY: 'auto', paddingBottom: 'calc(16px + var(--safe-bottom))' },
+  dayGroup: { padding: '0' },
+  dayHeader: { padding: '8px 16px 5px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.12em', color: 'var(--text3)', textTransform: 'uppercase', position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 5, borderBottom: '1px solid var(--border2)' },
+  timeDivider: { padding: '4px 16px', fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.08em', borderBottom: '1px solid var(--border2)', background: 'var(--bg2)' },
+  card: { padding: '9px 16px', borderBottom: '1px solid var(--border2)', display: 'flex', flexDirection: 'column', gap: '3px', transition: 'background 0.1s', background: 'transparent' },
+  artistName: { fontSize: '13px', fontWeight: 500, color: 'var(--text)', letterSpacing: '0.02em', lineHeight: 1.3 },
+  artistLink: { color: 'var(--text)', cursor: 'pointer', borderBottom: '1px dotted var(--border)', paddingBottom: '1px' },
+  venueLine: { fontSize: '11px', color: 'var(--text2)', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' },
+  venueLink: { color: 'var(--text2)', cursor: 'pointer', borderBottom: '1px dotted var(--border2)', paddingBottom: '1px' },
+  tag: color => ({ display: 'inline-block', fontSize: '9px', padding: '1px 5px', borderRadius: '2px', background: color + '22', color: color, border: `1px solid ${color}44`, letterSpacing: '0.05em', flexShrink: 0 }),
+  newBadge: { display: 'inline-block', fontSize: '9px', padding: '1px 5px', borderRadius: '2px', background: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44', letterSpacing: '0.05em', flexShrink: 0, fontWeight: 700 },
+  priceBadge: { fontSize: '10px', color: 'var(--green)', flexShrink: 0 },
+  ageBadge: free => ({ fontSize: '10px', color: free ? 'var(--green)' : 'var(--text3)', flexShrink: 0 }),
+  actionRow: { display: 'flex', gap: '6px', marginTop: '4px', flexWrap: 'wrap', alignItems: 'center' },
+  actionBtn: { fontSize: '10px', color: 'var(--text3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '2px 7px', letterSpacing: '0.04em' },
+  tagBtn: active => ({ fontSize: '10px', color: active ? 'var(--accent)' : 'var(--text3)', border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 'var(--radius)', padding: '2px 7px', letterSpacing: '0.04em' }),
+  ticketBtn: active => ({ fontSize: '10px', color: active ? 'var(--green)' : 'var(--text3)', border: `1px solid ${active ? 'var(--green)' : 'var(--border)'}`, borderRadius: 'var(--radius)', padding: '2px 7px', letterSpacing: '0.04em' }),
+  hideBtn: { fontSize: '10px', color: 'var(--text3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '2px 5px', letterSpacing: '0.04em', opacity: 0.7 },
+  djBadge: { display: 'inline-block', fontSize: '9px', padding: '1px 5px', borderRadius: '2px', background: '#5b6cff22', color: '#5b6cff', border: '1px solid #5b6cff44', letterSpacing: '0.05em', flexShrink: 0 },
+  emptyState: { padding: '48px 16px', textAlign: 'center', color: 'var(--text3)', fontSize: '12px', letterSpacing: '0.06em', lineHeight: 2 },
+  loadingWrap: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '16px', color: 'var(--text3)', fontSize: '12px', letterSpacing: '0.08em' },
+  loadingDot: { width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent)', animation: 'pulse 1s ease-in-out infinite' },
+  statusBar: { padding: '4px 16px', fontSize: '10px', color: 'var(--text3)', borderTop: '1px solid var(--border2)', flexShrink: 0, display: 'flex', gap: '8px', alignItems: 'center', paddingBottom: 'calc(4px + var(--safe-bottom))', background: 'var(--bg)' },
+  modal: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', backdropFilter: 'blur(4px)' },
+  modalInner: { background: 'var(--bg2)', borderRadius: '12px 12px 0 0', padding: '20px 16px', width: '100%', maxWidth: '600px', maxHeight: '80vh', overflowY: 'auto', paddingBottom: 'calc(20px + var(--safe-bottom))', border: '1px solid var(--border)', borderBottom: 'none' },
+  modalTitle: { fontSize: '13px', fontWeight: 700, marginBottom: '0', letterSpacing: '0.06em' },
+  inputGroup: { marginBottom: '12px' },
+  label: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.08em', display: 'block', marginBottom: '4px' },
+  input: { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '12px', padding: '7px 10px', outline: 'none', fontFamily: 'var(--mono)' },
+  btnPrimary: { background: 'var(--accent)', color: 'var(--bg)', fontSize: '12px', fontWeight: 700, padding: '8px 16px', borderRadius: 'var(--radius)', letterSpacing: '0.06em', width: '100%', marginTop: '4px' },
+  btnSecondary: { background: 'transparent', color: 'var(--text2)', fontSize: '12px', padding: '8px 16px', borderRadius: 'var(--radius)', border: '1px solid var(--border)', letterSpacing: '0.06em', width: '100%', marginTop: '4px' },
+  sectionToggle: { display: 'flex', gap: '0', borderRadius: 'var(--radius)', border: '1px solid var(--border)', overflow: 'hidden', flexShrink: 0 },
+  sectionBtn: active => ({ fontSize: '10px', padding: '4px 10px', background: active ? 'var(--accent)' : 'transparent', color: active ? 'var(--bg)' : 'var(--text2)', letterSpacing: '0.06em', borderRight: '1px solid var(--border)' }),
+  installBanner: { padding: '10px 16px', background: 'var(--bg3)', borderBottom: '1px solid var(--border)', fontSize: '11px', color: 'var(--text2)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 },
+  searchBar: { padding: '7px 16px', borderBottom: '1px solid var(--border2)', background: 'var(--bg)', flexShrink: 0 },
+  searchWrap: { position: 'relative', display: 'flex', alignItems: 'center' },
+  searchInput: { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '20px', color: 'var(--text)', fontSize: '16px', padding: '5px 32px 5px 12px', outline: 'none', fontFamily: 'var(--mono)' },
+  searchClear: { position: 'absolute', right: '10px', fontSize: '14px', color: 'var(--text3)', lineHeight: 1, padding: '2px 4px', cursor: 'pointer' },
+  moreFiltersPanel: { position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 200, background: 'var(--bg2)', borderRadius: '14px 14px 0 0', border: '1px solid var(--border)', borderBottom: 'none', padding: '16px 16px calc(16px + var(--safe-bottom))', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 -4px 32px rgba(0,0,0,0.5)' },
+  jumpLinks: { display: 'flex', gap: '8px', marginLeft: 'auto' },
+  jumpLink: { fontSize: '9px', color: 'var(--text3)', cursor: 'pointer', letterSpacing: '0.05em', textDecoration: 'underline', textDecorationColor: 'var(--border)', padding: '2px 0' },
+};
+
+// ── Animations ────────────────────────────────────────────────────
+const ANIM_STYLE = `
+  @keyframes pulse { 0%,100%{opacity:0.3;transform:scale(0.8)} 50%{opacity:1;transform:scale(1.2)} }
+  @keyframes spin   { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+  @keyframes slideDown { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:translateY(0)} }
+  .card-hover:hover { background: var(--bg2) !important; }
+  .filter-scroll::-webkit-scrollbar { display: none; }
+  ::placeholder { color: var(--text3); }
+  .more-panel { animation: slideDown 0.15s ease; }
+
+`;
+
+// ── EventCard ─────────────────────────────────────────────────────
+function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onToggleTicket, onHide, onToggleDJ, onArtistClick, onVenueClick }) {
+  const tagged = tags && tags[event.id];
+  const hasTicket = tickets && tickets[event.id];
+  const isHidden = hidden && hidden[event.id];
+  const genre = GENRES[resolveGenre(event.g)] || GENRES.other;
+  const newEvent = isNew(event);
+  const isDJ = event._isDJ;
+
+  if (isHidden) return null;
+
+  const artists = artistArray(event.a);
+
+  return React.createElement("div", {
+    className: 'card-hover',
+    style: { ...S.card, position: 'relative' }
+  },
+    // Row 1: artist names + price/age (right)
+    React.createElement("div", { style: { display: 'flex', alignItems: 'flex-start', gap: '8px' } },
+      React.createElement("div", { style: { ...S.artistName, flex: 1 } },
+        artists.length === 0
+          ? React.createElement("span", { style: S.artistLink, onClick: () => onVenueClick && onVenueClick(event.v) }, event.v)
+          : artists.map((artist, ai) =>
+              React.createElement(React.Fragment, { key: ai },
+                ai > 0 && React.createElement("span", { style: { color: 'var(--text3)' } }, ' · '),
+                React.createElement("span", {
+                  style: S.artistLink,
+                  onClick: (e) => { e.stopPropagation(); onArtistClick && onArtistClick(artist, event); }
+                }, artist)
+              )
+            ),
+        newEvent && React.createElement("span", { style: { ...S.newBadge, marginLeft: '6px' } }, "NEW"),
+        tagged && React.createElement("span", { style: { ...S.tag('#e8ff47'), marginLeft: '6px' } }, "★"),
+        hasTicket && React.createElement("span", { style: { ...S.tag('var(--green)'), marginLeft: '6px' } }, "🎫"),
+        isDJ && React.createElement("span", { style: { ...S.djBadge, marginLeft: '6px' } }, "DJ"),
+        event.rec && React.createElement("span", { style: { ...S.tag('#888855'), marginLeft: '6px', fontSize: '9px' } }, "recurring")
+      ),
+      // Price + age (top-right)
+      React.createElement("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px', flexShrink: 0 } },
+        event.p === '0' || event.p === 0 || event.pr === 'free'
+          ? React.createElement("span", { style: S.priceBadge }, "FREE")
+          : event.p && React.createElement("span", { style: { fontSize: '10px', color: 'var(--text3)' } }, `$${String(event.p).replace(/^\$+/, '')}`),
+        (event.age === 'all' || event.age === 'all-ages') && React.createElement("span", { style: S.ageBadge(true) }, "all-ages")
+      )
+    ),
+    // Row 2: venue/time/region + action buttons
+    // Single flex-wrap container. The venue div has flex: 1 1 auto with a min-width
+    // so it can share a line with the buttons when there's room, but the buttons wrap
+    // naturally to the next line when they don't fit — no JS line-counting needed.
+    // With genre row below: buttons may wrap early for breathing room; without genre
+    // row: they stay on the same line when venue is short enough.
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', justifyContent: 'space-between' }, onClick: e => e.stopPropagation() },
+      // Venue + time + region — grows to fill available space, wraps if needed
+      React.createElement("div", { style: { ...S.venueLine, flex: '1 1 auto', flexWrap: 'nowrap', minWidth: '120px', maxWidth: '100%' } },
+        event.v && React.createElement("span", {
+          style: S.venueLink,
+          onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
+        }, event.v),
+        (() => {
+          const { startMins, endMins, doorsMins, showMins, endExplicit, hasTime } = eventTimings(event);
+          const parts = [];
+          if (doorsMins !== null && showMins !== null && doorsMins !== showMins)
+            parts.push(`doors ${minsToDisplay(doorsMins)}`);
+          if (hasTime)
+            parts.push((doorsMins !== null && showMins !== null && doorsMins !== showMins)
+              ? `show ${minsToDisplay(showMins)}`
+              : minsToDisplay(startMins));
+          parts.push(`ends ${minsToDisplay(endMins)}${endExplicit ? '' : ' (est.)'}`);
+          return React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', parts.join(' · '));
+        })(),
+        event.r && React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', fmtRegion(event.r))
+      ),
+      // Action buttons — never shrinks, wraps as a unit to the next line if needed
+      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flex: '0 0 auto', flexWrap: 'wrap' } },
+        event.lk && React.createElement("a", { href: event.lk, target: "_blank", rel: "noopener", style: S.actionBtn }, "info ↗"),
+        event.maps_url && React.createElement("a", { href: event.maps_url, target: "_blank", rel: "noopener", style: S.actionBtn }, "map ↗"),
+        React.createElement("a", { href: gcalUrl(event), target: "_blank", rel: "noopener", style: S.actionBtn }, "📅"),
+        React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag(event.id) }, tagged ? '★' : '☆'),
+        React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket(event.id) }, hasTicket ? '🎫' : '🎟'),
+        React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => onHide(event.id) }, "✕"),
+        isDJ && React.createElement("button", {
+          style: { ...S.actionBtn, fontSize: '9px', color: 'var(--text3)' },
+          title: 'Mark as live event',
+          onClick: () => onToggleDJ(event.id, 'live')
+        }, "mark live"),
+        !isDJ && event.s === '19hz' && React.createElement("button", {
+          style: { ...S.actionBtn, fontSize: '9px', color: 'var(--text3)' },
+          title: 'Mark as DJ/club event',
+          onClick: () => onToggleDJ(event.id, 'dj')
+        }, "mark DJ")
+      )
+    ),
+    // Row 3: genre + subgenre badges — only when there's something real to show
+    (() => {
+      const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
+      const genreBadges = (Array.isArray(event.g) ? event.g : [event.g])
+        .filter(gRaw => {
+          if (!gRaw || typeof gRaw !== 'string' || !gRaw.trim()) return false;
+          const key = resolveGenre(gRaw);
+          return key !== 'other' && GENRE_KEYS_SET.has(key);
+        })
+        .map(gRaw => ({ key: resolveGenre(gRaw), ...GENRES[resolveGenre(gRaw)] }))
+        .filter((item, idx, arr) => arr.findIndex(x => x.key === item.key) === idx); // dedupe
+      const sgText = fmtSg(event.sg);
+      const hasBadges = genreBadges.length > 0 || !!sgText;
+      if (!hasBadges) return null;
+      return React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '2px' } },
+        genreBadges.map((g, gi) =>
+          React.createElement("span", { key: gi, style: S.tag(g.color) }, g.label)
+        ),
+        sgText && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, sgText)
+      );
+    })(),
+    event.n && React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', marginTop: '2px', lineHeight: 1.4 } }, event.n)
+  );
+}
+
+// ── Artist Panel (slide-up sheet) ─────────────────────────────────
+function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleTag, onToggleTicket, onHide, onVenueClick, onBack, onClose }) {
+  const artistEvents = events.filter(e =>
+    artistArray(e.a).some(a => a.toLowerCase() === artistName.toLowerCase())
+  ).sort((a, b) => a.d < b.d ? -1 : 1);
+
+  const normalizeKey = name => name.toLowerCase().trim()
+    .replace(/[øØ]/g, 'o').replace(/[æÆ]/g, 'ae').replace(/[åÅ]/g, 'a')
+    .replace(/[ðÐ]/g, 'd').replace(/[þÞ]/g, 'th').replace(/ß/g, 'ss')
+    .replace(/[łŁ]/g, 'l').replace(/[œŒ]/g, 'oe')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const mbLinks = (artistLinks && artistLinks[normalizeKey(artistName)]) || {};
+
+  useEffect(() => {
+    const h = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, []);
+
+  return React.createElement("div", { style: S.modal, onClick: onClose },
+    React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
+      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' } },
+        React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 } },
+          onBack && React.createElement("button", {
+            style: { color: 'var(--text3)', fontSize: '16px', lineHeight: 1, padding: '0 4px 0 0', flexShrink: 0, borderRight: '1px solid var(--border2)', paddingRight: '8px' },
+            onClick: onBack, title: 'Go back'
+          }, "←"),
+          React.createElement("div", { style: { ...S.modalTitle, marginBottom: '2px' } }, artistName)
+        ),
+        React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
+      ),
+      // Genre + subgenre badges
+      (() => {
+        const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
+        const src = artistEvents[0] || {};
+        const genreBadges = (Array.isArray(src.g) ? src.g : [src.g])
+          .filter(gRaw => gRaw && typeof gRaw === 'string' && gRaw.trim() && (() => { const k = resolveGenre(gRaw); return k !== 'other' && GENRE_KEYS_SET.has(k); })())
+          .map(gRaw => ({ key: resolveGenre(gRaw), ...GENRES[resolveGenre(gRaw)] }))
+          .filter((item, idx, arr) => arr.findIndex(x => x.key === item.key) === idx);
+        const sgText = fmtSg(src.sg);
+        if (!genreBadges.length && !sgText) return null;
+        return React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '10px' } },
+          genreBadges.map((g, gi) => React.createElement("span", { key: gi, style: S.tag(g.color) }, g.label)),
+          sgText && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, sgText)
+        );
+      })(),
+      // Artist links — MB-derived + discovery fallbacks
+      React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '8px' } },
+        // MB-derived links: only shown when the URL is actually populated
+        ...[
+          { key: 'spotify',     label: 'Spotify',     color: '#1db954' },
+          { key: 'bandcamp',    label: 'Bandcamp',    color: '#4a8fbb' },
+          { key: 'homepage',    label: 'Website',     color: '#aaaacc' },
+          { key: 'apple_music', label: 'Apple Music', color: '#fa57c1' },
+          { key: 'youtube',     label: 'YouTube',     color: '#ff4444' },
+          { key: 'soundcloud',  label: 'SoundCloud',  color: '#ff5500' },
+          { key: 'instagram',   label: 'Instagram',   color: '#c13584' },
+          { key: 'discogs',     label: 'Discogs',     color: '#333366' },
+        ].filter(({ key }) => mbLinks[key]).map(({ key, label, color }) =>
+          React.createElement("a", {
+            key,
+            href: mbLinks[key],
+            target: '_blank', rel: 'noopener',
+            style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: `1px solid ${color}44`, color, background: `${color}11`, textDecoration: 'none' }
+          }, label + ' ↗')
+        ),
+        // Discovery links: always shown as fallbacks
+        React.createElement("a", {
+          href: mbLinks.musicbrainz || `https://musicbrainz.org/search?query=${encodeURIComponent(artistName)}&type=artist`,
+          target: '_blank', rel: 'noopener',
+          style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: '1px solid #ba478f44', color: '#ba478f', background: '#ba478f11', textDecoration: 'none' }
+        }, "MusicBrainz ↗"),
+        React.createElement("a", {
+          href: mbLinks.lastfm || `https://www.last.fm/search/artists?q=${encodeURIComponent(artistName)}`,
+          target: '_blank', rel: 'noopener',
+          style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: '1px solid #d5100744', color: '#d51007', background: '#d5100711', textDecoration: 'none' }
+        }, "Last.fm ↗")
+      ),
+      // Upcoming shows
+      artistEvents.length > 0 && React.createElement("div", null,
+        React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px' } },
+          `UPCOMING SHOWS (${artistEvents.length})`),
+        artistEvents.map(e => {
+          const tagged = tags && tags[e.id];
+          const hasTicket = tickets && tickets[e.id];
+          return React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
+            // Row 1: date/time (left) + action buttons (right), wraps if needed
+            React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', flexWrap: 'wrap', marginBottom: '2px' }, onClick: ev => ev.stopPropagation() },
+              React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, flex: '1 1 auto' } },
+                dateLabel(e.d),
+                (() => {
+                  const { doorsMins, showMins, hasTime } = eventTimings(e);
+                  if (!hasTime) return '';
+                  if (doorsMins !== null && showMins !== null && doorsMins !== showMins)
+                    return ` · doors ${minsToDisplay(doorsMins)} · show ${minsToDisplay(showMins)}`;
+                  return ` · show ${minsToDisplay(showMins !== null ? showMins : doorsMins)}`;
+                })()
+              ),
+              React.createElement("div", { style: { display: 'flex', gap: '4px', alignItems: 'center', flex: '0 0 auto', flexWrap: 'wrap' } },
+                e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
+                e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
+                React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "📅"),
+                React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
+                React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫' : '🎟'),
+                React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => { onHide && onHide(e.id); } }, "✕")
+              )
+            ),
+            // Row 2: venue as clickable link
+            React.createElement("div", null,
+              e.v && React.createElement("span", {
+                style: { color: 'var(--blue)', cursor: 'pointer', borderBottom: '1px dotted var(--blue)44' },
+                onClick: (ev) => { ev.stopPropagation(); onVenueClick && onVenueClick(e.v); }
+              }, e.v),
+              e.r && React.createElement("span", { style: { color: 'var(--text3)' } }, ` · ${fmtRegion(e.r)}`)
+            )
+          );
+        })
+      ),
+      artistEvents.length === 0 && React.createElement("div", { style: { color: 'var(--text3)', fontSize: '11px' } }, "No upcoming shows found in current data.")
+    )
+  );
+}
+
+// ── Venue Panel ───────────────────────────────────────────────────
+function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTicket, onHide, onArtistClick, onBack, onClose }) {
+  const venueEvents = events.filter(e => e.v === venueName).sort((a, b) => a.d < b.d ? -1 : 1);
+  const sample = venueEvents[0] || {};
+
+  useEffect(() => {
+    const h = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, []);
+
+  const isIOS     = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  const mapsHref = (() => {
+    if (sample.lat && sample.lng) {
+      const label = encodeURIComponent(venueName);
+      if (isIOS) {
+        // maps.apple.com is exclusively handled by Apple Maps on iOS — geo: can be claimed by any map app
+        return `https://maps.apple.com/?ll=${sample.lat},${sample.lng}&q=${label}`;
       }
+      if (isAndroid) {
+        return `geo:${sample.lat},${sample.lng}?q=${sample.lat},${sample.lng}(${label})`;
+      }
+      // Desktop: Google Maps
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((sample.addr ? sample.addr + ', ' : '') + (sample.city || '') + (sample.state ? ', ' + sample.state : ''))}`;
+    }
+    if (sample.maps_url) return sample.maps_url;
+    return null;
+  })();
 
-      if (token) {
-        const tok = {
-          access_token: token,
-          expires_at:   Date.now() + expiresIn * 1000,
-        };
-        try {
-          localStorage.setItem(GDRIVE_AUTH_KEY, JSON.stringify(tok));
-        } catch(e) {
-          showError('Could not save token: ' + e.message);
-          return;
+  return React.createElement("div", { style: S.modal, onClick: onClose },
+    React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
+      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' } },
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+          React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' } },
+            onBack && React.createElement("button", {
+              style: { color: 'var(--text3)', fontSize: '16px', lineHeight: 1, padding: '0 8px 0 0', flexShrink: 0, borderRight: '1px solid var(--border2)' },
+              onClick: onBack, title: 'Go back'
+            }, "←"),
+            React.createElement("div", { style: S.modalTitle }, venueName)
+          ),
+          (sample.addr || mapsHref) && React.createElement("a", {
+            href: mapsHref || '#',
+            target: "_blank", rel: "noopener",
+            style: { fontSize: '11px', color: 'var(--blue)', marginTop: '3px', display: 'block', textDecoration: 'underline', textDecorationColor: 'var(--blue)44', lineHeight: 1.5 }
+          }, [
+            sample.addr,
+            sample.city && sample.addr ? `, ${sample.city}` : sample.city,
+            sample.r ? ` (${fmtRegion(sample.r)})` : ''
+          ].filter(Boolean).join('') || 'Directions ↗'),
+          sample.website && React.createElement("a", {
+            href: sample.website, target: "_blank", rel: "noopener",
+            style: { fontSize: '11px', color: 'var(--text2)', marginTop: '2px', display: 'block', textDecoration: 'underline', textDecorationColor: 'var(--border)' }
+          }, sample.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''))
+        ),
+        React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
+      ),
+      // Upcoming shows
+      React.createElement("div", { style: { fontSize: '9px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px' } },
+        `UPCOMING SHOWS (${venueEvents.length})`),
+      venueEvents.map(e => {
+        const tagged = tags && tags[e.id];
+        const hasTicket = tickets && tickets[e.id];
+        const artists = artistArray(e.a);
+        return React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
+          // Row 1: date/time (left) + action buttons (right), wraps if needed
+          React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', flexWrap: 'wrap', marginBottom: '2px' }, onClick: ev => ev.stopPropagation() },
+            React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, flex: '1 1 auto' } },
+              dateLabel(e.d),
+              (() => {
+                const { doorsMins, showMins, hasTime } = eventTimings(e);
+                if (!hasTime) return '';
+                if (doorsMins !== null && showMins !== null && doorsMins !== showMins)
+                  return ` · doors ${minsToDisplay(doorsMins)} · show ${minsToDisplay(showMins)}`;
+                return ` · show ${minsToDisplay(showMins !== null ? showMins : doorsMins)}`;
+              })()
+            ),
+            React.createElement("div", { style: { display: 'flex', gap: '4px', alignItems: 'center', flex: '0 0 auto', flexWrap: 'wrap' } },
+              e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
+              e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
+              React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "📅"),
+              React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
+              React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫' : '🎟'),
+              React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => { onHide && onHide(e.id); } }, "✕")
+            )
+          ),
+          // Row 2: artists as clickable links + genre/subgenre badges inline
+          React.createElement("div", { style: { display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' } },
+            artists.length === 0
+              ? React.createElement("span", null, '—')
+              : artists.map((artist, ai) =>
+                  React.createElement(React.Fragment, { key: ai },
+                    ai > 0 && React.createElement("span", { style: { color: 'var(--text3)' } }, ' · '),
+                    React.createElement("span", {
+                      style: { color: 'var(--blue)', cursor: 'pointer', borderBottom: '1px dotted var(--blue)44' },
+                      onClick: (ev) => { ev.stopPropagation(); onArtistClick && onArtistClick(artist, e); }
+                    }, artist)
+                  )
+                ),
+            ...(() => {
+              const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
+              const genreBadges = (Array.isArray(e.g) ? e.g : [e.g])
+                .filter(gRaw => gRaw && typeof gRaw === 'string' && gRaw.trim() && (() => { const k = resolveGenre(gRaw); return k !== 'other' && GENRE_KEYS_SET.has(k); })())
+                .map(gRaw => ({ key: resolveGenre(gRaw), ...GENRES[resolveGenre(gRaw)] }))
+                .filter((item, idx, arr) => arr.findIndex(x => x.key === item.key) === idx);
+              const sgText = fmtSg(e.sg);
+              return [
+                ...genreBadges.map((g, gi) => React.createElement("span", { key: `g${gi}`, style: { ...S.tag(g.color), fontSize: '9px' } }, g.label)),
+                sgText ? React.createElement("span", { key: 'sg', style: { ...S.tag('#888899'), fontSize: '9px' } }, sgText) : null
+              ].filter(Boolean);
+            })()
+          )
+        );
+      })
+    )
+  );
+}
+
+// ── More Filters Panel ────────────────────────────────────────────
+function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
+  const [local, setLocal] = useState({
+    ...prefs,
+    timeBuckets:   prefs.timeBuckets   || [],
+    timeRange:     prefs.timeRange     || [0, 1439],
+    recencyMode:   prefs.recencyMode   || 'da',
+    recencyWindow: prefs.recencyWindow || null,
+  });
+  const toggle = k => setLocal(p => ({ ...p, [k]: !p[k] }));
+
+  const toggleBucket = b => {
+    const cur = local.timeBuckets || [];
+    setLocal(p => ({ ...p, timeBuckets: cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b] }));
+  };
+
+  const minLabel = m => {
+    const h = Math.floor(m / 60) % 24, min = m % 60;
+    return `${h % 12 || 12}:${pad(min)} ${h < 12 ? 'AM' : 'PM'}`;
+  };
+
+  const fmtSinceDate = ds => {
+    if (!ds) return '';
+    const [y, m, d] = ds.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  };
+
+  const recencyActive = w => {
+    if (!local.recencyWindow) return false;
+    if (w === '1d') return local.recencyWindow === '1d';
+    if (w === '7d') return local.recencyWindow === '7d';
+    if (w === 'since') return typeof local.recencyWindow === 'object' && local.recencyWindow !== null;
+    return false;
+  };
+  const setRecency = w => {
+    if (recencyActive(w)) { setLocal(p => ({ ...p, recencyWindow: null })); return; }
+    if (w === 'since') { setLocal(p => ({ ...p, recencyWindow: { since: todayStr() } })); return; }
+    setLocal(p => ({ ...p, recencyWindow: w }));
+  };
+
+  const Row = ({ label, field, desc }) =>
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border2)' } },
+      React.createElement("div", null,
+        React.createElement("div", { style: { fontSize: '12px', color: 'var(--text)' } }, label),
+        desc && React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', marginTop: '2px' } }, desc)
+      ),
+      React.createElement("button", {
+        style: { ...S.filterChip(local[field]), flexShrink: 0, fontSize: '11px', padding: '4px 12px' },
+        onClick: () => toggle(field)
+      }, local[field] ? 'ON' : 'OFF')
+    );
+
+  const chip = active => ({
+    fontSize: '11px', padding: '5px 12px', borderRadius: '20px', cursor: 'pointer',
+    border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+    color: active ? 'var(--bg)' : 'var(--text2)',
+    background: active ? 'var(--accent)' : 'transparent',
+    whiteSpace: 'nowrap', letterSpacing: '0.04em',
+  });
+
+  const SectionHead = ({ children }) => React.createElement("div", {
+    style: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: '8px', marginTop: '4px' }
+  }, children);
+
+  const Divider = () => React.createElement("div", { style: { borderTop: '1px solid var(--border2)', margin: '10px 0' } });
+
+  const bucketDefs = [
+    ['morning', '🌅 Morning', '6 AM–Noon'],
+    ['matinee', '☀️ Matinee', 'Noon–5 PM'],
+    ['evening', '🌆 Evening',  '5–9 PM'],
+    ['night',   '🌙 Night',    '9 PM+'],
+  ];
+
+  return React.createElement("div", { style: S.moreFiltersPanel, onClick: e => e.stopPropagation() },
+    // drag handle
+    React.createElement("div", { style: { width: '36px', height: '4px', borderRadius: '2px', background: 'var(--border)', margin: '0 auto 14px' } }),
+
+    // ── Recency ──
+    React.createElement(SectionHead, null, "RECENCY"),
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' } },
+      ...['da', 'dm'].map((mode, i) => [
+        i > 0 && React.createElement("span", { key: 'sep', style: { color: 'var(--text3)', fontSize: '10px' } }, "/"),
+        React.createElement("span", { key: mode, style: {
+          fontSize: '11px', cursor: 'pointer',
+          fontWeight: local.recencyMode === mode ? 700 : 400,
+          color: local.recencyMode === mode ? 'var(--accent)' : 'var(--text3)',
+          textDecoration: local.recencyMode === mode ? 'underline' : 'none',
+          textDecorationStyle: 'dotted',
+        }, onClick: () => setLocal(p => ({ ...p, recencyMode: mode })) },
+          mode === 'da' ? 'date added' : 'date modified'
+        )
+      ]).flat().filter(Boolean)
+    ),
+    React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' } },
+      React.createElement("button", { style: chip(recencyActive('1d')), onClick: () => setRecency('1d') }, "today"),
+      React.createElement("button", { style: chip(recencyActive('7d')), onClick: () => setRecency('7d') }, "past week"),
+      React.createElement("button", {
+        style: { ...chip(recencyActive('since')), display: 'inline-flex', gap: '4px', alignItems: 'center' },
+        onClick: () => setRecency('since')
+      },
+        "since ",
+        recencyActive('since')
+          ? React.createElement("strong", { style: { color: 'var(--accent)' } }, fmtSinceDate(local.recencyWindow && local.recencyWindow.since))
+          : React.createElement("span", { style: { opacity: 0.5, borderBottom: '1px solid currentColor', minWidth: '28px', textAlign: 'center' } }, "···")
+      ),
+    ),
+    recencyActive('since') && React.createElement("input", {
+      type: 'date',
+      value: (local.recencyWindow && local.recencyWindow.since) || todayStr(),
+      max: todayStr(),
+      style: { display: 'block', marginBottom: '8px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '13px', padding: '6px 10px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%', boxSizing: 'border-box' },
+      onChange: e => setLocal(p => ({ ...p, recencyWindow: { since: e.target.value } }))
+    }),
+    local.recencyWindow && React.createElement("button", {
+      style: { fontSize: '10px', color: 'var(--text3)', textDecoration: 'underline', marginBottom: '4px', display: 'block' },
+      onClick: () => setLocal(p => ({ ...p, recencyWindow: null }))
+    }, "clear"),
+
+    React.createElement(Divider, null),
+
+    // ── Time of day ──
+    React.createElement(SectionHead, null, "TIME OF DAY"),
+    React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' } },
+      bucketDefs.map(([key, label, sub]) => {
+        const active = (local.timeBuckets || []).includes(key);
+        return React.createElement("button", {
+          key,
+          style: { ...chip(active), display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px', padding: '6px 12px', lineHeight: 1.25 },
+          onClick: () => toggleBucket(key)
+        },
+          React.createElement("span", null, label),
+          React.createElement("span", { style: { fontSize: '9px', opacity: 0.7 } }, sub)
+        );
+      })
+    ),
+    (local.timeBuckets || []).length > 0 && React.createElement("button", {
+      style: { fontSize: '10px', color: 'var(--text3)', textDecoration: 'underline', marginBottom: '4px', display: 'block' },
+      onClick: () => setLocal(p => ({ ...p, timeBuckets: [] }))
+    }, "clear"),
+
+    React.createElement(Divider, null),
+
+    // ── Time range sliders ──
+    React.createElement(SectionHead, null, "START TIME"),
+    React.createElement("div", { style: { display: 'flex', justifyContent: 'flex-end', fontSize: '11px', color: 'var(--accent)', marginBottom: '4px' } },
+      local.timeRange[0] > 0 ? `from ${minLabel(local.timeRange[0])}` : 'any'
+    ),
+    React.createElement("input", {
+      type: 'range', min: 0, max: 1439, step: 15, value: local.timeRange[0],
+      style: { width: '100%', accentColor: 'var(--accent)', marginBottom: '2px' },
+      onChange: e => { const v = parseInt(e.target.value); setLocal(p => ({ ...p, timeRange: [v, Math.max(v + 30, p.timeRange[1])] })); }
+    }),
+    React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text3)', marginBottom: '10px' } },
+      React.createElement("span", null, "12 AM"), React.createElement("span", null, "12 PM"), React.createElement("span", null, "11:45 PM")
+    ),
+    React.createElement(SectionHead, null, "END TIME"),
+    React.createElement("div", { style: { display: 'flex', justifyContent: 'flex-end', fontSize: '11px', color: 'var(--accent)', marginBottom: '4px' } },
+      local.timeRange[1] < 1439 ? `by ${minLabel(local.timeRange[1])}` : 'any'
+    ),
+    React.createElement("input", {
+      type: 'range', min: 0, max: 1439, step: 15, value: local.timeRange[1],
+      style: { width: '100%', accentColor: 'var(--accent)', marginBottom: '2px' },
+      onChange: e => { const v = parseInt(e.target.value); setLocal(p => ({ ...p, timeRange: [Math.min(p.timeRange[0], v - 30), v] })); }
+    }),
+    React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text3)', marginBottom: (local.timeRange[0] > 0 || local.timeRange[1] < 1439) ? '4px' : '0' } },
+      React.createElement("span", null, "12 AM"), React.createElement("span", null, "12 PM"), React.createElement("span", null, "11:45 PM")
+    ),
+    (local.timeRange[0] > 0 || local.timeRange[1] < 1439) && React.createElement("button", {
+      style: { fontSize: '10px', color: 'var(--text3)', textDecoration: 'underline', display: 'block', marginBottom: '4px' },
+      onClick: () => setLocal(p => ({ ...p, timeRange: [0, 1439] }))
+    }, "reset"),
+
+    React.createElement(Divider, null),
+
+    // ── Boolean rows ──
+    React.createElement(Row, { label: "Free only", field: "freeOnly" }),
+    React.createElement(Row, { label: "All ages only", field: "allAgesOnly" }),
+    React.createElement(Row, { label: "Saved shows only", field: "showSaved", desc: "Shows you've starred" }),
+    React.createElement(Row, { label: "Has tickets", field: "showTickets", desc: "Events you've marked as purchased" }),
+    React.createElement(Row, { label: "Starred (no ticket)", field: "showStarredNoTicket", desc: "Liked but not yet ticketed" }),
+    React.createElement(Row, { label: "Show hidden events", field: "showHidden", desc: "Events you've dismissed with ✕" }),
+    React.createElement(Row, { label: "Show DJ / club events", field: "showDJ", desc: "Hidden by default — 19hz DJ nights etc." }),
+    React.createElement(Row, { label: "Hide recurring events", field: "hideRecurring", desc: "Filters out weekly/monthly club nights" }),
+    React.createElement(Row, { label: "Recurring events only", field: "recurringOnly", desc: "Show only regular series" }),
+
+    React.createElement("div", { style: { display: 'flex', gap: '8px', marginTop: '16px' } },
+      React.createElement("button", {
+        style: { ...S.btnPrimary, flex: 1, marginTop: 0, fontSize: '13px', padding: '10px' },
+        onClick: () => { savePrefs({ ...prefs, ...local }); onClose(); }
+      }, "Save"),
+      React.createElement("button", {
+        style: { ...S.btnSecondary, flex: 1, marginTop: 0, fontSize: '13px', padding: '10px' },
+        onClick: onClose
+      }, "Cancel")
+    )
+  );
+}
+
+// ── Add Modal ─────────────────────────────────────────────────────
+function AddModal({ onSave, onClose }) {
+  const [form, setForm] = useState({ a: '', v: '', d: todayStr(), t: '', g: 'Rock', p: '', age: '', n: '', lk: '' });
+  const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
+  const handleSave = () => {
+    if (!form.a && !form.v) return;
+    const id = `manual-${Date.now()}`;
+    onSave({ ...form, id, so: 'manual', da: Date.now(), dm: Date.now() });
+    onClose();
+  };
+  return React.createElement("div", { style: S.modal, onClick: onClose },
+    React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
+      React.createElement("div", { style: S.modalTitle }, "Add Event"),
+      [['a', 'Artist / Headliner'], ['v', 'Venue'], ['d', 'Date (YYYY-MM-DD)'], ['t', 'Time (HH:MM)'], ['p', 'Price'], ['lk', 'Link']].map(([k, label]) =>
+        React.createElement("div", { key: k, style: S.inputGroup },
+          React.createElement("label", { style: S.label }, label),
+          React.createElement("input", { style: S.input, value: form[k], onChange: set(k) })
+        )
+      ),
+      React.createElement("div", { style: S.inputGroup },
+        React.createElement("label", { style: S.label }, "Genre"),
+        React.createElement("select", { style: S.input, value: form.g, onChange: set('g') },
+          GENRE_KEYS.map(g => React.createElement("option", { key: g, value: g }, GENRES[g].label))
+        )
+      ),
+      React.createElement("div", { style: S.inputGroup },
+        React.createElement("label", { style: S.label }, "Ages"),
+        React.createElement("select", { style: S.input, value: form.age, onChange: set('age') },
+          React.createElement("option", { value: "" }, "—"),
+          React.createElement("option", { value: "all" }, "All ages"),
+          React.createElement("option", { value: "21+" }, "21+"),
+          React.createElement("option", { value: "18+" }, "18+")
+        )
+      ),
+      React.createElement("div", { style: S.inputGroup },
+        React.createElement("label", { style: S.label }, "Notes"),
+        React.createElement("textarea", { style: { ...S.input, height: '60px', resize: 'vertical' }, value: form.n, onChange: set('n') })
+      ),
+      React.createElement("button", { style: S.btnPrimary, onClick: handleSave }, "Save Event"),
+      React.createElement("button", { style: S.btnSecondary, onClick: onClose }, "Cancel")
+    )
+  );
+}
+
+// ── Install Banner ────────────────────────────────────────────────
+function InstallBanner({ onDismiss }) {
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isStandalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+  if (isStandalone || !isIOS) return null;
+  return React.createElement("div", { style: S.installBanner },
+    React.createElement("span", { style: { fontSize: '16px' } }, "⬆"),
+    React.createElement("span", { style: { flex: 1 } }, 'Tap Share then "Add to Home Screen" to install'),
+    React.createElement("button", { style: { color: 'var(--text3)', fontSize: '14px' }, onClick: onDismiss }, "×")
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────
+function App() {
+  const [events, setEvents] = useState([]);
+  const [artistLinks, setArtistLinks] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [cacheInfo, setCacheInfo] = useState(null);
+  const [tags, setTags] = useState(() => lsGet(TAGS_KEY, {}));
+  const [tickets, setTickets] = useState(() => lsGet(TICKETS_KEY, {}));
+  const [hidden, setHidden] = useState(() => lsGet(HIDDEN_KEY, {}));
+  const [djOverrides, setDjOverrides] = useState(() => lsGet(DJ_OVERRIDE_KEY, {}));
+  const [manual, setManual] = useState(() => lsGet(MANUAL_KEY, []));
+  const PREFS_DEFAULTS = {
+    view: 'week',
+    regions: [],
+    genres: [],
+    freeOnly: false,
+    allAgesOnly: false,
+    showSaved: false,
+    subgenres: [],
+    showDJ: false,
+    showHidden: false,
+    showTickets: false,
+    showStarredNoTicket: false,
+    hideRecurring: false,
+    recurringOnly: false,
+    timeBuckets: [],        // [] = no filter; subset of 'morning'|'matinee'|'evening'|'night'
+    timeRange: [0, 1439],   // [startMin, endMin] — mins since midnight
+    recencyMode: 'da',      // 'da' = date added, 'dm' = date modified
+    recencyWindow: null,    // null | '1d' | '7d' | { since: 'YYYY-MM-DD' }
+  };
+  const [prefs, setPrefs] = useState(() => {
+    // Always merge defaults first so new keys are never undefined
+    const stored = lsGet(PREFS_KEY, {});
+    const saved = { ...PREFS_DEFAULTS, ...stored };
+    const urlView = new URLSearchParams(window.location.search).get('view');
+    if (urlView && ['today', 'week', 'month'].includes(urlView)) saved.view = urlView;
+    return saved;
+  });
+  const [expandedDays, setExpandedDays] = useState(() => new Set());
+  const [showAdd, setShowAdd] = useState(false);
+  const [showInstall, setShowInstall] = useState(true);
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [driveUser, setDriveUser] = useState(null);
+  const [driveSyncing, setDriveSyncing] = useState(false);
+  const [driveSyncMsg, setDriveSyncMsg] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [artistPanel, setArtistPanel] = useState(null); // { name, event }
+  const [venuePanel, setVenuePanel] = useState(null);   // venueName string
+  const [panelHistory, setPanelHistory] = useState([]); // [{ type:'artist'|'venue', value }]
+
+  // ── Browser back button / mouse back ─────────────────────────────
+  // Push a synthetic history entry whenever any panel is open so that
+  // the browser back button (and back-swipe on desktop browsers) fires
+  // popstate instead of actually navigating away.
+  const anyPanelOpen = !!(artistPanel || venuePanel);
+  useEffect(() => {
+    if (anyPanelOpen) {
+      window.history.pushState({ bayShowsPanel: true }, '');
+    }
+  }, [anyPanelOpen]);
+
+  useEffect(() => {
+    const onPopState = (e) => {
+      // Only intercept if we have a panel open — let normal navigation through otherwise
+      if (!artistPanel && !venuePanel) return;
+      // Prevent the default navigation
+      e.preventDefault();
+      // Treat as a back press: same logic as the ← button
+      if (panelHistory.length > 0) {
+        const prev = panelHistory[panelHistory.length - 1];
+        setPanelHistory(h => h.slice(0, -1));
+        setArtistPanel(null);
+        setVenuePanel(null);
+        if (prev.type === 'venue') setVenuePanel(prev.value);
+        else if (prev.type === 'artist') setArtistPanel(prev.value);
+        // Re-push so the next back press is still intercepted
+        window.history.pushState({ bayShowsPanel: true }, '');
+      } else {
+        setArtistPanel(null);
+        setVenuePanel(null);
+        setPanelHistory([]);
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [artistPanel, venuePanel, panelHistory]);
+
+  // ── Left-edge swipe to go back (mobile) ──────────────────────────
+  // Only fires when a panel is open; threshold is 60px horizontal with
+  // less than 60px vertical drift to avoid conflicting with scroll.
+  const touchStartRef = useRef(null);
+  useEffect(() => {
+    const onTouchStart = (e) => {
+      if (!artistPanel && !venuePanel) return;
+      const t = e.touches[0];
+      touchStartRef.current = { x: t.clientX, y: t.clientY };
+    };
+    const onTouchEnd = (e) => {
+      if (!touchStartRef.current || (!artistPanel && !venuePanel)) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - touchStartRef.current.x;
+      const dy = Math.abs(t.clientY - touchStartRef.current.y);
+      touchStartRef.current = null;
+      // Right swipe: dx > 60px, vertical drift < 60px
+      if (dx > 60 && dy < 60) {
+        if (panelHistory.length > 0) {
+          const prev = panelHistory[panelHistory.length - 1];
+          setPanelHistory(h => h.slice(0, -1));
+          setArtistPanel(null);
+          setVenuePanel(null);
+          if (prev.type === 'venue') setVenuePanel(prev.value);
+          else if (prev.type === 'artist') setArtistPanel(prev.value);
+          window.history.pushState({ bayShowsPanel: true }, '');
+        } else {
+          setArtistPanel(null);
+          setVenuePanel(null);
+          setPanelHistory([]);
         }
-        window.history.replaceState(null, '', window.location.pathname);
-        showSuccess();
-        setTimeout(() => { try { window.close(); } catch(e) {} }, 600);
-        return;
       }
+    };
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchend', onTouchEnd, { passive: true });
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchend', onTouchEnd);
+    };
+  }, [artistPanel, venuePanel, panelHistory]);
 
-      // No params — fresh open, kick off the flow
-      startAuth();
+  const scrollRef = useRef(null);
+  const dayRefs = useRef({}); // { [dayKey]: domNode }
+
+  // Debounced tag write
+  const _debouncedTagWrite = useRef(null);
+  if (!_debouncedTagWrite.current) {
+    _debouncedTagWrite.current = debounce(async (tagObj) => {
+      const tok = await getOrRefreshToken();
+      if (!tok) return;
+      try { await driveWrite(tok, GOOG_TAGS_FILE, tagObj); } catch {}
+    }, 600);
+  }
+
+  const runDriveSync = useCallback(async (token) => {
+    setDriveSyncing(true);
+    setDriveSyncMsg('');
+    try {
+      const ui = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${token}` } });
+      const user = await ui.json();
+      if (!user.email) throw new Error('Could not fetch user info');
+      setDriveUser({ email: user.email });
+      lsSet(GDRIVE_USER_KEY, { email: user.email }); // persists across token expiry
+      scheduleTokenRefresh();
+      const drivePrefs = await driveRead(token, GOOG_PREFS_FILE);
+      if (drivePrefs) { savePrefs({ ...PREFS_DEFAULTS, ...prefs, ...drivePrefs }); }
+      else { await driveWrite(token, GOOG_PREFS_FILE, prefs); }
+      const localTags = lsGet(TAGS_KEY, {});
+      const driveTags = await driveRead(token, GOOG_TAGS_FILE);
+      if (driveTags) {
+        const merged = mergeTags(localTags, driveTags);
+        setTags(merged); lsSet(TAGS_KEY, merged);
+        await driveWrite(token, GOOG_TAGS_FILE, merged);
+        const added = Object.keys(merged).length - Object.keys(localTags).length;
+        setDriveSyncMsg(added > 0 ? `Synced — ${added} saved show${added > 1 ? 's' : ''} restored` : 'Synced with Drive');
+      } else {
+        await driveWrite(token, GOOG_TAGS_FILE, localTags);
+        setDriveSyncMsg(`Signed in · ${Object.keys(localTags).length} shows backed up`);
+      }
+    } catch (e) { setDriveSyncMsg('Sync error: ' + e.message); }
+    finally { setDriveSyncing(false); setTimeout(() => setDriveSyncMsg(''), 6000); }
+  }, [prefs]);
+
+  useEffect(() => {
+    // Immediately restore email badge from persistent store (visible before token check)
+    const savedUser = lsGet(GDRIVE_USER_KEY, null);
+    if (savedUser && savedUser.email) setDriveUser(savedUser);
+    // Then get/refresh a token and verify it's still accepted by Google
+    getOrRefreshToken().then(tok => {
+      if (!tok) return;
+      scheduleTokenRefresh();
+      fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${tok}` } })
+        .then(r => r.json())
+        .then(u => {
+          if (u.email) {
+            setDriveUser({ email: u.email });
+            lsSet(GDRIVE_USER_KEY, { email: u.email });
+          }
+        }).catch(() => {});
+    });
+  }, []);
+
+  const signInWithGoogle = useCallback(async () => {
+    if (!GOOG_CLIENT_ID) { setDriveSyncMsg('Drive sync not configured'); return; }
+    setDriveSyncing(true);
+    setDriveSyncMsg('Opening Google sign-in tab…');
+    try {
+      const token = await openAuthTab();
+      await runDriveSync(token);
+    } catch (e) {
+      setDriveSyncMsg(e.message === 'popup_blocked' ? 'Tab blocked — allow pop-ups in Safari settings' : 'Sign-in failed: ' + e.message);
+      setDriveSyncing(false);
+      setTimeout(() => setDriveSyncMsg(''), 7000);
     }
+  }, [runDriveSync]);
 
-    handleReturn();
+  const reSyncDrive = useCallback(async () => {
+    const tok = await getOrRefreshToken();
+    if (tok) { runDriveSync(tok); return; }
+    signInWithGoogle();
+  }, [runDriveSync, signInWithGoogle]);
+
+  const syncPrefsToDrive = useCallback(async (newPrefs) => {
+    const tok = await getOrRefreshToken();
+    if (!tok) return;
+    try { await driveWrite(tok, GOOG_PREFS_FILE, newPrefs); } catch {}
+  }, []);
+
+  const snapRef = useRef(false);
+
+  const saveTags = t => { setTags(t); lsSet(TAGS_KEY, t); _debouncedTagWrite.current(t); };
+  const savePrefs = p => { setPrefs(p); lsSet(PREFS_KEY, p); syncPrefsToDrive(p); };
+  const saveManual = m => { setManual(m); lsSet(MANUAL_KEY, m); };
+
+  const load = useCallback(async (force = false) => {
+    if (force) { lsSet(CACHE_KEY, null); setRefreshing(true); }
+    setError(null);
+    try {
+      const { events: fetched, meta, artistLinks: fetchedLinks, fromCache, ts } = await fetchEvents();
+      if (!snapRef.current) {
+        const snap = lsGet(SNAP_KEY, null);
+        if (!snap) {
+          const newSnap = {};
+          fetched.forEach(e => { newSnap[e.id] = 1; });
+          lsSet(SNAP_KEY, newSnap);
+        }
+        snapRef.current = true;
+      }
+      setEvents(fetched);
+      setArtistLinks(fetchedLinks || {});
+      const t = todayStr();
+      const tmrw = new Date(); tmrw.setDate(tmrw.getDate() + 1);
+      const tmrwStr = `${tmrw.getFullYear()}-${pad(tmrw.getMonth()+1)}-${pad(tmrw.getDate())}`;
+      setExpandedDays(new Set([t, tmrwStr]));
+      setCacheInfo({ fromCache, ts, meta });
+    } catch (err) {
+      setError(err.message);
+      const stale = lsGet(CACHE_KEY);
+      if (stale && stale.events) { setEvents(stale.events); setArtistLinks(stale.artistLinks || {}); setCacheInfo({ fromCache: true, ts: stale.ts, stale: true }); }
+    } finally { setLoading(false); setRefreshing(false); }
+  }, []);
+
+  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/bay-shows/sw.js').catch(console.warn);
+    }
+  }, []);
+
+  // Attach DJ classification to events
+  const allEvents = useMemo(() => {
+    const manualWithFlag = manual.map(e => ({ ...e, _manual: true }));
+    return [...manualWithFlag, ...events].map(e => ({
+      ...e,
+      _isDJ: classifyDJ(e, djOverrides)
+    }));
+  }, [events, manual, djOverrides]);
+
+  // Filtered events (respects all prefs + search)
+  const filtered = useMemo(() => {
+    const today = todayStr();
+    const q = searchQuery.trim().toLowerCase();
+    return allEvents.filter(e => {
+      if (!e.d || e.d < today) return false;
+
+      // Remove expired events
+      if (hasEnded(e)) return false;
+
+      // Hidden filter
+      if (!prefs.showHidden && hidden[e.id]) return false;
+
+      // DJ / club filter — all 19hz events hidden by default
+      // showDJ must be explicitly true to surface them
+      if (e._isDJ && prefs.showDJ !== true) return false;
+      // Recurring filter
+      if (prefs.hideRecurring && e.rec) return false;
+      if (prefs.recurringOnly && !e.rec) return false;
+
+      if (prefs.freeOnly && !(e.p === '0' || e.p === 0 || e.pr === 'free')) return false;
+      if (prefs.allAgesOnly && !(e.age === 'all' || e.age === 'all-ages')) return false;
+      if (prefs.showSaved && !tags[e.id]) return false;
+      if (prefs.showTickets && !tickets[e.id]) return false;
+      if (prefs.showStarredNoTicket && !(tags[e.id] && !tickets[e.id])) return false;
+      if (prefs.regions && prefs.regions.length > 0 && !prefs.regions.includes(e.r)) return false;
+      if (prefs.genres && prefs.genres.length > 0 && !prefs.genres.includes(resolveGenre(e.g))) return false;
+      if (prefs.subgenres && prefs.subgenres.length > 0) {
+        const evSgs = Array.isArray(e.sg) ? e.sg : [e.sg || ''];
+        if (!prefs.subgenres.some(sg => evSgs.some(s => s === sg || s.toLowerCase() === sg.toLowerCase()))) return false;
+      }
+      // Time-of-day bucket filter
+      if (prefs.timeBuckets && prefs.timeBuckets.length > 0) {
+        if (!prefs.timeBuckets.includes(timeBucket(e))) return false;
+      }
+      // Start/end time range slider
+      if (prefs.timeRange && (prefs.timeRange[0] > 0 || prefs.timeRange[1] < 1439)) {
+        const { startMins, endMins } = eventTimings(e);
+        if (startMins > prefs.timeRange[1] || (endMins % 1440) < prefs.timeRange[0]) return false;
+      }
+      // Recency filter — da/dm can be "YYYY-MM-DD" string OR ms timestamp number.
+      // Normalise both to "YYYY-MM-DD" for comparison.
+      if (prefs.recencyWindow) {
+        const raw = prefs.recencyMode === 'dm' ? e.dm : e.da;
+        if (!raw) return false;
+        let evDateStr; // "YYYY-MM-DD"
+        if (typeof raw === 'number') {
+          const d = new Date(raw);
+          evDateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+        } else {
+          // Already a string — take just the date portion
+          evDateStr = String(raw).slice(0, 10);
+        }
+        const today = todayStr();
+        if (prefs.recencyWindow === '1d') {
+          if (evDateStr !== today) return false;
+        } else if (prefs.recencyWindow === '7d') {
+          // today and the 6 prior days
+          const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 6);
+          const cutoffStr = `${cutoff.getFullYear()}-${pad(cutoff.getMonth()+1)}-${pad(cutoff.getDate())}`;
+          if (evDateStr < cutoffStr) return false;
+        } else if (prefs.recencyWindow && prefs.recencyWindow.since) {
+          if (evDateStr < prefs.recencyWindow.since) return false;
+        }
+      }
+      // Search
+      if (q) {
+        const haystack = [fmtA(e.a), e.v, fmtSg(e.sg), e.n].filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      // View window
+      if (prefs.view === 'today') return e.d === today;
+      if (prefs.view === 'week') {
+        const limit = new Date(); limit.setDate(limit.getDate() + 7);
+        const [y, m, d] = e.d.split('-').map(Number);
+        return new Date(y, m - 1, d) <= limit;
+      }
+      return true;
+    }).sort((a, b) => {
+      if (a.d !== b.d) return a.d < b.d ? -1 : 1;
+      return midpointMins(a) - midpointMins(b);
+    });
+  }, [allEvents, prefs, tags, tickets, hidden, searchQuery]);
+
+  // Group by day → time bucket
+  const grouped = useMemo(() => {
+    const map = {};
+    filtered.forEach(e => {
+      if (!map[e.d]) map[e.d] = {};
+      const tb = timeBucket(e);
+      if (!map[e.d][tb]) map[e.d][tb] = [];
+      map[e.d][tb].push(e);
+    });
+    return map;
+  }, [filtered]);
+
+  const dayKeys = Object.keys(grouped).sort();
+  const today = todayStr();
+
+  // Expand ALL days initially (and on full expand)
+  const expandAll = () => setExpandedDays(new Set(dayKeys));
+  const collapseAll = () => setExpandedDays(new Set());
+
+  // Auto-expand all days on initial load and whenever filters change
+  useEffect(() => {
+    if (dayKeys.length > 0) setExpandedDays(new Set(dayKeys));
+  }, [dayKeys.join(',')]);
+
+  const toggleDay = (day) => {
+    const next = new Set(expandedDays);
+    next.has(day) ? next.delete(day) : next.add(day);
+    setExpandedDays(next);
+  };
+
+  // Jump to a day key by scrolling its ref into view
+  const jumpTo = (dayKey) => {
+    if (!dayKey) return;
+    // Expand that day first
+    setExpandedDays(prev => { const s = new Set(prev); s.add(dayKey); return s; });
+    setTimeout(() => {
+      const el = dayRefs.current[dayKey];
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  };
+
+  const toggleTag = id => { const next = { ...tags }; if (next[id]) delete next[id]; else next[id] = Date.now(); saveTags(next); };
+  const toggleTicket = id => { const next = { ...tickets }; if (next[id]) delete next[id]; else next[id] = Date.now(); setTickets(next); lsSet(TICKETS_KEY, next); };
+  const hideEvent = id => { const next = { ...hidden, [id]: Date.now() }; setHidden(next); lsSet(HIDDEN_KEY, next); };
+  const toggleDJ = (id, val) => { const next = { ...djOverrides, [id]: val }; setDjOverrides(next); lsSet(DJ_OVERRIDE_KEY, next); };
+
+  const toggleGenre = g => {
+    const genres = prefs.genres || [];
+    const wasActive = genres.includes(g);
+    const next = wasActive ? genres.filter(x => x !== g) : [...genres, g];
+    savePrefs({ ...prefs, genres: next, subgenres: wasActive ? [] : (next.length === 1 ? (prefs.subgenres || []) : []) });
+  };
+
+  // Count active secondary filters for badge
+  const activeSecondaryCount = [
+    prefs.freeOnly, prefs.allAgesOnly, prefs.showSaved, prefs.showTickets,
+    prefs.showStarredNoTicket, prefs.showHidden, prefs.showDJ,
+    prefs.hideRecurring, prefs.recurringOnly,
+    prefs.timeBuckets && prefs.timeBuckets.length > 0,
+    prefs.timeRange && (prefs.timeRange[0] > 0 || prefs.timeRange[1] < 1439),
+    !!prefs.recencyWindow,
+  ].filter(Boolean).length;
+
+  return React.createElement("div", { style: S.app },
+    React.createElement("style", null, ANIM_STYLE),
+    React.createElement("div", { style: S.appInner },
+
+    // ── Header ──
+    React.createElement("div", { style: S.header },
+      React.createElement("div", { style: S.headerRow },
+        React.createElement("div", { style: S.logo }, "♪"),
+        React.createElement("div", { style: { flex: 1 } },
+          React.createElement("div", { style: S.title }, "BAY SHOWS"),
+          React.createElement("div", { style: S.subtitle },
+            loading ? 'loading…' : cacheInfo ? (() => {
+              const total = cacheInfo.meta ? cacheInfo.meta.event_count : null;
+              const builtAt = cacheInfo.meta && cacheInfo.meta.built_at
+                ? new Date(cacheInfo.meta.built_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : null;
+              return `${filtered.length}${total ? '/'+total : ''} shows · ${cacheInfo.fromCache ? 'cached' : 'live'}${cacheInfo.stale ? ' (stale)' : ''}${builtAt ? ' · updated '+builtAt : ''}`;
+            })() : `${filtered.length} shows`
+          )
+        ),
+        React.createElement("div", { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+          React.createElement("button", { style: { ...S.actionBtn, color: prefs.showSaved ? 'var(--accent)' : 'var(--text3)' }, onClick: () => savePrefs({ ...prefs, showSaved: !prefs.showSaved }) }, "★"),
+          React.createElement("button", { style: S.actionBtn, onClick: () => setShowAdd(true) }, "+"),
+          React.createElement("button", { style: { ...S.refreshBtn, opacity: refreshing ? 0.5 : 1 }, onClick: () => load(true), disabled: refreshing }, refreshing ? '↻…' : '↻'),
+          driveUser
+            ? React.createElement("button", {
+                title: `Synced as ${driveUser.email}\nTap to re-sync`,
+                style: { background: 'none', border: 'none', padding: '3px 2px 0', cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0, opacity: driveSyncing ? 0.5 : 1, transition: 'opacity 0.2s' },
+                onClick: reSyncDrive
+              },
+              React.createElement("svg", { width: 24, height: 21, viewBox: "0 0 87.3 78", xmlns: "http://www.w3.org/2000/svg", style: driveSyncing ? { animation: 'spin 1s linear infinite' } : {} },
+                React.createElement("path", { d: "m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z", fill: "#0066da" }),
+                React.createElement("path", { d: "m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z", fill: "#00ac47" }),
+                React.createElement("path", { d: "m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z", fill: "#ea4335" }),
+                React.createElement("path", { d: "m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z", fill: "#00832d" }),
+                React.createElement("path", { d: "m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z", fill: "#2684fc" }),
+                React.createElement("path", { d: "m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 27h27.45c0-1.55-.4-3.1-1.2-4.5z", fill: "#ffba00" })
+              )
+            )
+            : GOOG_CLIENT_ID && React.createElement("button", {
+                title: 'Sign in with Google to sync',
+                style: { background: 'none', border: 'none', padding: '3px 2px 0', cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0, opacity: driveSyncing ? 0.4 : 0.28, transition: 'opacity 0.2s' },
+                onClick: signInWithGoogle
+              },
+              React.createElement("svg", { width: 24, height: 21, viewBox: "0 0 87.3 78", xmlns: "http://www.w3.org/2000/svg" },
+                React.createElement("path", { d: "m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z", fill: "#888" }),
+                React.createElement("path", { d: "m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z", fill: "#888" }),
+                React.createElement("path", { d: "m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z", fill: "#888" }),
+                React.createElement("path", { d: "m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z", fill: "#888" }),
+                React.createElement("path", { d: "m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z", fill: "#888" }),
+                React.createElement("path", { d: "m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 27h27.45c0-1.55-.4-3.1-1.2-4.5z", fill: "#888" })
+              )
+            )
+        )
+      ),
+      // View toggle + expand/collapse controls
+      React.createElement("div", { style: { display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' } },
+        React.createElement("div", { style: S.sectionToggle },
+          [['today', 'Today'], ['week', 'Week'], ['month', 'All']].map(([v, l]) =>
+            React.createElement("button", { key: v, style: S.sectionBtn(prefs.view === v), onClick: () => savePrefs({ ...prefs, view: v }) }, l)
+          )
+        ),
+        React.createElement("button", { style: { ...S.actionBtn, fontSize: '9px' }, onClick: expandAll }, "expand all"),
+        React.createElement("button", { style: { ...S.actionBtn, fontSize: '9px' }, onClick: collapseAll }, "collapse all"),
+        // More filters button with badge
+        React.createElement("button", {
+          style: { ...S.filterChip(showMoreFilters || activeSecondaryCount > 0), marginLeft: 'auto' },
+          onClick: () => setShowMoreFilters(v => !v)
+        }, `Filters${activeSecondaryCount > 0 ? ` (${activeSecondaryCount})` : ''} ${showMoreFilters ? '▴' : '▾'}`)
+      )
+    ),
+
+    // ── Search bar ──
+    React.createElement("div", { style: S.searchBar },
+      React.createElement("div", { style: S.searchWrap },
+        React.createElement("input", {
+          style: S.searchInput,
+          type: 'text',
+          placeholder: '🔍 Search artists, venues, tags…',
+          value: searchQuery,
+          onChange: e => setSearchQuery(e.target.value)
+        }),
+        searchQuery && React.createElement("button", {
+          style: S.searchClear,
+          onClick: () => setSearchQuery(''),
+          'aria-label': 'Clear search'
+        }, "×")
+      )
+    ),
+
+    // ── More Filters Panel ──
+    showMoreFilters && React.createElement(React.Fragment, null,
+      React.createElement("div", {
+        style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 199, backdropFilter: 'blur(2px)' },
+        onClick: () => setShowMoreFilters(false)
+      }),
+      React.createElement(MoreFiltersPanel, { prefs, savePrefs, onClose: () => setShowMoreFilters(false) })
+    ),
+
+    // ── Genre chips ──
+    React.createElement("div", { style: S.filters, className: "filter-scroll" },
+      GENRE_KEYS.map(g => {
+        const active = (prefs.genres || []).includes(g);
+        return React.createElement("button", { key: g, style: S.genreChip(GENRES[g].color, active), onClick: () => toggleGenre(g) }, GENRES[g].label);
+      })
+    ),
+
+    // ── Subgenre chips ──
+    (prefs.genres || []).length === 1 && SUBGENRES_BY_TOP[(prefs.genres)[0]] && SUBGENRES_BY_TOP[(prefs.genres)[0]].length > 1 &&
+    React.createElement("div", {
+      style: { ...S.filters, paddingTop: '3px', paddingBottom: '3px', background: 'var(--bg2)', borderTop: '1px solid var(--border2)' },
+      className: "filter-scroll"
+    }, SUBGENRES_BY_TOP[(prefs.genres)[0]].map(sg => {
+      const sgActive = (prefs.subgenres || []).includes(sg);
+      const color = GENRES[(prefs.genres)[0]].color;
+      return React.createElement("button", {
+        key: sg,
+        style: { ...S.filterChip(sgActive), fontSize: '9px', border: sgActive ? `1px solid ${color}` : '1px solid var(--border2)', color: sgActive ? color : 'var(--text2)', background: sgActive ? color + '22' : 'transparent', padding: '2px 7px' },
+        onClick: () => { const subs = prefs.subgenres || []; savePrefs({ ...prefs, subgenres: sgActive ? subs.filter(s => s !== sg) : [...subs, sg] }); }
+      }, sg);
+    })),
+
+    // ── Region chips ──
+    React.createElement("div", {
+      style: { ...S.filters, paddingTop: '4px', paddingBottom: '6px', borderBottom: '1px solid var(--border2)' },
+      className: "filter-scroll"
+    }, Object.entries(REGIONS).map(([k, v]) => {
+      const active = (prefs.regions || []).includes(k);
+      return React.createElement("button", {
+        key: k,
+        style: S.filterChip(active),
+        onClick: () => { const regions = prefs.regions || []; savePrefs({ ...prefs, regions: active ? regions.filter(r => r !== k) : [...regions, k] }); }
+      }, v);
+    })),
+
+    showInstall && React.createElement(InstallBanner, { onDismiss: () => setShowInstall(false) }),
+
+    // ── Main scroll area ──
+    React.createElement("div", { style: S.scroll, ref: scrollRef },
+      loading && React.createElement("div", { style: S.loadingWrap },
+        React.createElement("div", { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+          [0, 200, 400].map(delay => React.createElement("div", { key: delay, style: { ...S.loadingDot, animationDelay: `${delay}ms` } }))
+        ),
+        React.createElement("div", null, "fetching bay area shows…")
+      ),
+      !loading && error && events.length === 0 && React.createElement("div", { style: S.emptyState },
+        React.createElement("div", { style: { color: 'var(--red)', marginBottom: '8px' } }, "⚠ ", error),
+        React.createElement("div", null, "Could not load events."),
+        React.createElement("button", { style: { ...S.actionBtn, marginTop: '12px' }, onClick: () => load(true) }, "Retry")
+      ),
+      !loading && dayKeys.length === 0 && React.createElement("div", { style: S.emptyState },
+        React.createElement("div", null, "No shows match your filters."),
+        React.createElement("button", {
+          style: { ...S.actionBtn, marginTop: '12px', color: 'var(--accent)' },
+          onClick: () => { savePrefs({ ...prefs, genres: [], regions: [], freeOnly: false, allAgesOnly: false, showSaved: false }); setSearchQuery(''); }
+        }, "Clear filters")
+      ),
+
+      dayKeys.map(day => {
+        const isToday = day === today;
+        const timeBuckets = grouped[day];
+        const count = Object.values(timeBuckets).flat().length;
+        const isExpanded = expandedDays.has(day);
+
+        return React.createElement("div", {
+          key: day,
+          style: S.dayGroup,
+          ref: el => { if (el) dayRefs.current[day] = el; }
+        },
+          // Day header
+          React.createElement("div", {
+            style: { ...S.dayHeader, color: isToday ? 'var(--accent)' : 'var(--text3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none' },
+            onClick: () => toggleDay(day)
+          },
+            React.createElement("span", null,
+              isToday ? '▶ TODAY — ' : '', dateLabel(day),
+              React.createElement("span", { style: { fontWeight: 300, marginLeft: '6px', color: 'var(--text3)' } }, count, " shows")
+            ),
+            React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '10px' }, onClick: e => e.stopPropagation() },
+              // Jump links
+              React.createElement("span", {
+                style: S.jumpLink,
+                onClick: (e) => { e.stopPropagation(); jumpTo(nextDayKey(day, dayKeys)); }
+              }, "next day ↓"),
+              React.createElement("span", {
+                style: S.jumpLink,
+                onClick: (e) => { e.stopPropagation(); jumpTo(nextWeekKey(day, dayKeys)); }
+              }, "next week ↓"),
+              React.createElement("span", {
+                style: S.jumpLink,
+                onClick: (e) => { e.stopPropagation(); jumpTo(nextMonthKey(day, dayKeys)); }
+              }, "next month ↓"),
+              React.createElement("span", { style: { fontSize: '10px', color: 'var(--text3)' } }, isExpanded ? '▾' : '▸')
+            )
+          ),
+
+          // Events (expanded)
+          isExpanded && TB_ORDER.filter(tb => timeBuckets[tb] && timeBuckets[tb].length > 0).map(tb =>
+            React.createElement("div", { key: tb },
+              React.createElement("div", { style: S.timeDivider }, timeBucketLabel[tb]),
+              timeBuckets[tb].map((event, i) =>
+                React.createElement(EventCard, {
+                  key: event.id,
+                  event: event,
+                  tags, tickets, hidden, djOverrides,
+                  onToggleTag: toggleTag,
+                  onToggleTicket: toggleTicket,
+                  onHide: hideEvent,
+                  onToggleDJ: toggleDJ,
+                  onArtistClick: (name) => setArtistPanel({ name }),
+                  onVenueClick: (name) => setVenuePanel(name)
+                })
+              )
+            )
+          )
+        );
+      })
+    ),
+
+    // ── Status bar ──
+    React.createElement("div", { style: S.statusBar },
+      cacheInfo && React.createElement(React.Fragment, null,
+        React.createElement("span", null, cacheInfo.fromCache ? '◌ cached' : '● live'),
+        cacheInfo.ts && React.createElement("span", { style: { color: 'var(--text3)' } }, '· ', new Date(cacheInfo.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+      ),
+      error && React.createElement("span", { style: { color: 'var(--red)' } }, "⚠ ", error),
+      driveUser && !driveSyncMsg && React.createElement("span", { style: { color: 'var(--text3)', fontSize: '10px' } }, driveUser.email.split('@')[0]),
+      driveSyncMsg && React.createElement("span", { style: { color: 'var(--accent)', fontSize: '10px' } }, driveSyncMsg),
+      React.createElement("span", { style: { marginLeft: 'auto', color: 'var(--text3)' } }, Object.keys(tags).length, " saved",
+        Object.keys(tickets).length > 0 ? ` · ${Object.keys(tickets).length} 🎫` : ''
+      )
+    ),
+
+    ), // end appInner
+
+    // ── Modals ──
+    artistPanel && React.createElement(ArtistPanel, {
+      artistName:    artistPanel.name,
+      events:        allEvents,
+      artistLinks:   artistLinks,
+      tags,
+      tickets,
+      onToggleTag:   toggleTag,
+      onToggleTicket:toggleTicket,
+      onHide:        hideEvent,
+      onVenueClick:  (vname) => {
+        setPanelHistory(h => [...h, { type: 'artist', value: artistPanel }]);
+        setArtistPanel(null);
+        setVenuePanel(vname);
+      },
+      onBack: panelHistory.length > 0 ? () => {
+        const prev = panelHistory[panelHistory.length - 1];
+        setPanelHistory(h => h.slice(0, -1));
+        setArtistPanel(null);
+        setVenuePanel(null);
+        if (prev.type === 'venue') setVenuePanel(prev.value);
+        else if (prev.type === 'artist') setArtistPanel(prev.value);
+      } : null,
+      onClose: () => { setArtistPanel(null); setPanelHistory([]); }
+    }),
+    venuePanel && React.createElement(VenuePanel, {
+      venueName:     venuePanel,
+      events:        allEvents,
+      tags,
+      tickets,
+      onToggleTag:   toggleTag,
+      onToggleTicket:toggleTicket,
+      onHide:        hideEvent,
+      onArtistClick: (name) => {
+        setPanelHistory(h => [...h, { type: 'venue', value: venuePanel }]);
+        setVenuePanel(null);
+        setArtistPanel({ name });
+      },
+      onBack: panelHistory.length > 0 ? () => {
+        const prev = panelHistory[panelHistory.length - 1];
+        setPanelHistory(h => h.slice(0, -1));
+        setArtistPanel(null);
+        setVenuePanel(null);
+        if (prev.type === 'venue') setVenuePanel(prev.value);
+        else if (prev.type === 'artist') setArtistPanel(prev.value);
+      } : null,
+      onClose: () => { setVenuePanel(null); setPanelHistory([]); }
+    }),
+    showAdd && React.createElement(AddModal, { onSave: e => { saveManual([e, ...manual]); }, onClose: () => setShowAdd(false) }),
+  );
+}
+
+// ── Bootstrap ─────────────────────────────────────────────────────
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App, null));
   </script>
 </body>
 </html>
