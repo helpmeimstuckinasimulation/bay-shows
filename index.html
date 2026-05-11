@@ -76,7 +76,13 @@ const DJ_OVERRIDE_KEY = 'bay-dj-override-v1'; // { [eventId]: 'live'|'dj' }
 const TTL_MS       = 6 * 60 * 60 * 1000;
 
 const GOOG_CLIENT_ID  = '1030489561991-kbu11qmn3o58ahu69d27f3g09qhai1ns.apps.googleusercontent.com';
-const GOOG_SCOPE      = 'https://www.googleapis.com/auth/drive.file';
+const GOOG_SCOPE      = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
+// v2.18: Community event submission endpoint.
+// After deploying the Apps Script as a Web App (Execute as: Me, Access: Anyone),
+// paste the deployment URL below. This is the SAME script as WEB_APP_URL — same
+// deployment, same URL. The script handles both doGet() (event feed) and doPost()
+// (community submissions).
+const COMMUNITY_ENDPOINT = WEB_APP_URL;  // same Web App handles both GET and POST
 const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
 const GOOG_PREFS_FILE = 'bay_shows_prefs.json';
 const GOOG_TAGS_FILE  = 'bay_shows_tags.json';
@@ -674,7 +680,12 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
         tagged && React.createElement("span", { style: { ...S.tag('#e8ff47'), marginLeft: '6px' } }, "★"),
         hasTicket && React.createElement("span", { style: { ...S.tag('var(--green)'), marginLeft: '6px' } }, "🎫"),
         isDJ && React.createElement("span", { style: { ...S.djBadge, marginLeft: '6px' } }, "DJ"),
-        event.rec && React.createElement("span", { style: { ...S.tag('#888855'), marginLeft: '6px', fontSize: '9px' } }, "recurring")
+        event.rec && React.createElement("span", { style: { ...S.tag('#888855'), marginLeft: '6px', fontSize: '9px' } }, "recurring"),
+        (event.community || event._manual || event.so === 'community' || event.so === 'manual') &&
+          React.createElement("span", {
+            style: { ...S.tag('#4488cc'), marginLeft: '6px', fontSize: '9px' },
+            title: event.submittedBy ? `submitted by ${event.submittedBy}` : 'community submission'
+          }, event.community || event.so === 'community' ? "community" : "local")
       ),
       // Price + age (top-right)
       React.createElement("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px', flexShrink: 0 } },
@@ -1196,18 +1207,86 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
 }
 
 // ── Add Modal ─────────────────────────────────────────────────────
-function AddModal({ onSave, onClose }) {
+function AddModal({ onSave, onClose, driveUser }) {
   const [form, setForm] = useState({ a: '', v: '', d: todayStr(), t: '', g: 'Rock', p: '', age: '', n: '', lk: '' });
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMsg, setSubmitMsg]   = useState('');
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
-  const handleSave = () => {
+
+  const handleSave = async () => {
     if (!form.a && !form.v) return;
+
+    // If user is signed in with Google, try to submit to the shared community sheet.
+    // Falls back to localStorage-only if the endpoint is unavailable or user is not allowlisted.
+    if (driveUser && COMMUNITY_ENDPOINT) {
+      setSubmitting(true);
+      setSubmitMsg('Submitting…');
+      try {
+        const tok = await getOrRefreshToken();
+        if (!tok) throw new Error('no_token');
+
+        const res = await fetch(COMMUNITY_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: tok, event: form }),
+        });
+
+        // Apps Script Web Apps return 200 even for errors; check the body
+        let data;
+        try { data = await res.json(); } catch { data = {}; }
+
+        if (data.ok) {
+          setSubmitMsg('✓ Submitted — will appear after next nightly rebuild');
+          // Also add locally so the submitter sees it immediately (marked community)
+          const id = data.id || `community-${Date.now()}`;
+          onSave({ ...form, id, so: 'community', s: 'community', community: true,
+                   submittedBy: driveUser.email, da: Date.now(), dm: Date.now() });
+          setTimeout(onClose, 1800);
+          return;
+        } else if (data.error && data.error.includes('Not authorized')) {
+          // User is authenticated but not on the allowlist — fall through to local-only
+          setSubmitMsg('Not on the approved list — saved locally only');
+          setTimeout(() => {
+            const id = `manual-${Date.now()}`;
+            onSave({ ...form, id, so: 'manual', da: Date.now(), dm: Date.now() });
+            onClose();
+          }, 2000);
+          return;
+        } else {
+          throw new Error(data.error || 'submission_failed');
+        }
+      } catch(err) {
+        const msg = err.message === 'no_token' ? 'Not signed in' : (err.message || 'Network error');
+        setSubmitMsg('Submit failed: ' + msg + ' — saved locally');
+        setTimeout(() => {
+          const id = `manual-${Date.now()}`;
+          onSave({ ...form, id, so: 'manual', da: Date.now(), dm: Date.now() });
+          onClose();
+        }, 2000);
+        return;
+      } finally {
+        setSubmitting(false);
+      }
+    }
+
+    // Not signed in — local only
     const id = `manual-${Date.now()}`;
     onSave({ ...form, id, so: 'manual', da: Date.now(), dm: Date.now() });
     onClose();
   };
+
+  const isSignedIn = !!driveUser;
+
   return React.createElement("div", { style: S.modal, onClick: onClose },
     React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
       React.createElement("div", { style: S.modalTitle }, "Add Event"),
+      // Sign-in notice
+      React.createElement("div", {
+        style: { fontSize: '10px', color: isSignedIn ? 'var(--green)' : 'var(--text3)',
+                 marginBottom: '10px', paddingBottom: '8px', borderBottom: '1px solid var(--border2)' }
+      }, isSignedIn
+        ? `✓ Signed in as ${driveUser.email} — event will be shared with all users`
+        : '⚠ Sign in with Google to share events with all users (+ icon → sign in first)'),
       [['a', 'Artist / Headliner'], ['v', 'Venue'], ['d', 'Date (YYYY-MM-DD)'], ['t', 'Time (HH:MM)'], ['p', 'Price'], ['lk', 'Link']].map(([k, label]) =>
         React.createElement("div", { key: k, style: S.inputGroup },
           React.createElement("label", { style: S.label }, label),
@@ -1233,7 +1312,15 @@ function AddModal({ onSave, onClose }) {
         React.createElement("label", { style: S.label }, "Notes"),
         React.createElement("textarea", { style: { ...S.input, height: '60px', resize: 'vertical' }, value: form.n, onChange: set('n') })
       ),
-      React.createElement("button", { style: S.btnPrimary, onClick: handleSave }, "Save Event"),
+      submitMsg && React.createElement("div", {
+        style: { fontSize: '11px', color: submitMsg.startsWith('✓') ? 'var(--green)' : 'var(--accent)',
+                 margin: '6px 0', textAlign: 'center' }
+      }, submitMsg),
+      React.createElement("button", {
+        style: { ...S.btnPrimary, opacity: submitting ? 0.6 : 1 },
+        onClick: handleSave,
+        disabled: submitting
+      }, submitting ? 'Submitting…' : (isSignedIn ? 'Share Event' : 'Save Locally')),
       React.createElement("button", { style: S.btnSecondary, onClick: onClose }, "Cancel")
     )
   );
@@ -1934,7 +2021,7 @@ function App() {
       } : null,
       onClose: () => { setVenuePanel(null); setPanelHistory([]); }
     }),
-    showAdd && React.createElement(AddModal, { onSave: e => { saveManual([e, ...manual]); }, onClose: () => setShowAdd(false) }),
+    showAdd && React.createElement(AddModal, { onSave: e => { saveManual([e, ...manual]); }, onClose: () => setShowAdd(false), driveUser }),
   );
 }
 
