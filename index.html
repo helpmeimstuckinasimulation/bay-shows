@@ -142,25 +142,78 @@ const scheduleTokenRefresh = () => {
 const openAuthTab = () => new Promise((resolve, reject) => {
   const tab = window.open(AUTH_URL, '_blank');
   if (!tab) { reject(new Error('popup_blocked')); return; }
-  const startTime = Date.now();
+
   const TIMEOUT_MS = 5 * 60 * 1000;
+  let settled = false;
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    try { tab.close(); } catch {}
+    reject(new Error('Sign-in timed out'));
+  }, TIMEOUT_MS);
+
+  // Primary: receive token via postMessage from auth.html
+  const onMessage = (event) => {
+    if (event.origin !== 'https://helpmeimstuckinasimulation.github.io') return;
+    if (!event.data || event.data.type !== 'BAY_SHOWS_AUTH') return;
+    if (settled) return;
+    settled = true;
+    cleanup();
+    if (event.data.error) { reject(new Error(event.data.error)); return; }
+    const tokenData = {
+      access_token: event.data.access_token,
+      expires_at: event.data.expires_at || (Date.now() + ((event.data.expires_in || 3600) * 1000)),
+    };
+    lsSet(GDRIVE_AUTH_KEY, tokenData);
+    resolve(event.data.access_token);
+  };
+  window.addEventListener('message', onMessage);
+
+  // Secondary: BroadcastChannel (same-origin, works when opener ref is unavailable)
+  let bc = null;
+  try {
+    bc = new BroadcastChannel('bay_shows_auth');
+    bc.onmessage = (event) => {
+      if (!event.data || event.data.type !== 'BAY_SHOWS_AUTH') return;
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (event.data.error) { reject(new Error(event.data.error)); return; }
+      const tokenData = {
+        access_token: event.data.access_token,
+        expires_at: event.data.expires_at || (Date.now() + 3600 * 1000),
+      };
+      lsSet(GDRIVE_AUTH_KEY, tokenData);
+      resolve(event.data.access_token);
+    };
+  } catch(e) { bc = null; }
+
+  // Tertiary: poll localStorage for browsers where the above cross-context
   const poll = setInterval(() => {
-    // Read raw localStorage — don't use getStoredToken() which filters by expiry
+    if (settled) { clearInterval(poll); return; }
     const t = lsGet(GDRIVE_AUTH_KEY, null);
-    if (t && t.access_token) { clearInterval(poll); resolve(t.access_token); return; }
-    if (tab.closed) {
-      clearInterval(poll);
-      const final = lsGet(GDRIVE_AUTH_KEY, null);
-      if (final && final.access_token) { resolve(final.access_token); return; }
-      reject(new Error('Tab closed without completing sign-in'));
+    if (t && t.access_token) {
+      settled = true;
+      cleanup();
+      resolve(t.access_token);
       return;
     }
-    if (Date.now() - startTime > TIMEOUT_MS) {
+    if (tab.closed) {
       clearInterval(poll);
-      try { tab.close(); } catch {}
-      reject(new Error('Sign-in timed out'));
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error('Tab closed without completing sign-in'));
     }
   }, 500);
+
+  function cleanup() {
+    clearTimeout(timer);
+    clearInterval(poll);
+    window.removeEventListener('message', onMessage);
+    try { if (bc) bc.close(); } catch {}
+  }
 });
 
 async function driveFileId(token, filename) {
