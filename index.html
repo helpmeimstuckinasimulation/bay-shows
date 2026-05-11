@@ -316,119 +316,140 @@ function classifyDJ(event, djOverrides) {
 const pad = n => String(n).padStart(2, '0');
 
 // Parse "HH:MM" or "H:MM" → minutes since midnight, or null
+// Parse a time string → minutes since midnight, or null.
+// Handles all formats seen in riotlist/19hz: "8pm", "9am", "7:30pm",
+// "8:00 PM", "20:00", "8:00" — bare hour, h:mm±ampm, 24-hr.
 function parseTimeStr(t) {
   if (!t) return null;
-  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
-  if (!m) return null;
-  return parseInt(m[1]) * 60 + parseInt(m[2]);
+  const s = String(t).trim().toLowerCase();
+  // Bare hour + am/pm: "8pm", "12am", "9am"
+  const bare = s.match(/^(\d{1,2})(am|pm)$/);
+  if (bare) {
+    let h = parseInt(bare[1]);
+    const isPM = bare[2] === 'pm';
+    if (h === 12) h = isPM ? 12 : 0;
+    else if (isPM) h += 12;
+    return h * 60;
+  }
+  // H:MM + am/pm (optional space): "7:30pm", "8:00 PM", "7:30 pm"
+  const hm12 = s.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/);
+  if (hm12) {
+    let h = parseInt(hm12[1]);
+    const m = parseInt(hm12[2]);
+    const isPM = hm12[3] === 'pm';
+    if (h === 12) h = isPM ? 12 : 0;
+    else if (isPM) h += 12;
+    return h * 60 + m;
+  }
+  // 24-hr: "20:00", "8:00" — only if no am/pm suffix
+  const hm24 = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (hm24) return parseInt(hm24[1]) * 60 + parseInt(hm24[2]);
+  return null;
 }
 
-// Format minutes since midnight → "HH:MM"
+// Format minutes since midnight → "h:MM AM/PM"
+function minsToDisplay(mins) {
+  const total = ((mins % 1440) + 1440) % 1440;
+  const h24 = Math.floor(total / 60);
+  const m   = total % 60;
+  const ampm = h24 < 12 ? 'AM' : 'PM';
+  const h12  = h24 % 12 || 12;
+  return `${h12}:${pad(m)} ${ampm}`;
+}
+
+// Format minutes since midnight → "HH:MM" (legacy, still referenced elsewhere)
 function minsToStr(mins) {
   const h = Math.floor(mins / 60) % 24;
   const m = mins % 60;
   return `${pad(h)}:${pad(m)}`;
 }
 
-// Is date string a weekend day (Fri or Sat night = Fri/Sat/Sun morning)?
+// Is date string a Fri or Sat?
 function isWeekendDate(dateStr) {
   const [y, mo, d] = dateStr.split('-').map(Number);
   const dow = new Date(y, mo - 1, d).getDay();
-  return dow === 5 || dow === 6; // Fri or Sat
+  return dow === 5 || dow === 6;
 }
 
-// Infer end time from start time, artist count, event type
-// Returns minutes since midnight (may exceed 1440 for next-day)
+// Infer end time. Returns minutes since midnight (may exceed 1440).
+// DJ sets: 4hr weekday / 5hr weekend.
+// Live: 45-60 min/act with caps that scale by time of day and weekend.
 function inferEndMins(startMins, event) {
-  const numActs = artistArray(event.a).length || 1;
+  const numActs = Math.max(artistArray(event.a).length, 1);
   const isWeekend = isWeekendDate(event.d);
   const isDJ = event._isDJ;
+  if (isDJ) return startMins + (isWeekend ? 5 * 60 : 4 * 60);
+  const h = Math.floor(startMins / 60) % 24;
+  if (h < 12) return startMins + Math.min(numActs * 45, 150);
+  if (h < 17) return startMins + Math.min(numActs * 50, 180);
+  if (h < 21) return startMins + Math.min(numActs * 60 + 30, isWeekend ? 240 : 210);
+  return startMins + Math.min(numActs * 60, isWeekend ? 300 : 240);
+}
 
-  if (isDJ) {
-    // DJ sets: nights go long
-    return startMins + (isWeekend ? 5 * 60 : 4 * 60);
-  }
-
-  // Live shows: ~45-60min per act + opener padding
-  // Matinee/afternoon: shorter; night: standard
-  if (startMins < 12 * 60) {
-    // Matinee
-    return startMins + Math.min(numActs * 50, 150);
-  } else if (startMins < 17 * 60) {
-    // Afternoon
-    return startMins + Math.min(numActs * 55, 180);
-  } else if (startMins < 21 * 60) {
-    // Evening (before 9pm)
-    const base = isWeekend ? 4 * 60 : 3 * 60;
-    return startMins + Math.min(numActs * 60 + 30, base);
+// Resolve all time fields for an event. Returns:
+//   startMins   — effective show start (t_show > t_doors/t > 19:00 default)
+//   endMins     — explicit or inferred end (may exceed 1440)
+//   doorsMins   — parsed doors time, or null
+//   showMins    — parsed show-start time, or null
+//   endExplicit — true if end came from data
+//   hasTime     — false only when no time data at all
+function eventTimings(event) {
+  const showMins  = parseTimeStr(event.t_show  || null);
+  const doorsMins = parseTimeStr(event.t_doors || event.t || null);
+  const endParsed = parseTimeStr(event.te || null);
+  const startMins = showMins  !== null ? showMins
+                  : doorsMins !== null ? doorsMins
+                  : 19 * 60;
+  const hasTime = showMins !== null || doorsMins !== null;
+  let endMins, endExplicit;
+  if (endParsed !== null) {
+    endMins = endParsed <= startMins ? endParsed + 1440 : endParsed;
+    endExplicit = true;
   } else {
-    // Late night (9pm+)
-    return startMins + (isWeekend ? 5 * 60 : 4 * 60);
+    endMins = inferEndMins(startMins, event);
+    endExplicit = false;
   }
+  return { startMins, endMins, doorsMins, showMins, endExplicit, hasTime };
 }
 
-// Determine effective start minutes (defaulting no-time to 19:00)
+// Shim used by hasEnded / midpointMins / timeBucket
 function effectiveStartMins(event) {
-  const t = event.t_show || event.t;
-  const parsed = parseTimeStr(t);
-  return parsed !== null ? parsed : 19 * 60; // 7pm default for unknown
+  return eventTimings(event).startMins;
 }
 
-// Time bucket based on effective start time
-// The old bug: events starting after midnight (e.g. 00:30) got bucket by raw clock hour
-// Fix: any show with no time defaults to evening; midnight+ shows are "night"
+// Time bucket: morning 6–11:59 / matinee 12–16:59 / evening 17–20:59 / night 21+
 function timeBucket(event) {
-  const mins = effectiveStartMins(event);
-  // Normalise to 0-1439 for bucket purposes
-  const h = Math.floor(mins / 60) % 24;
-  if (h >= 6 && h < 12) return 'matinee';
-  if (h >= 12 && h < 17) return 'afternoon';
+  const h = Math.floor(effectiveStartMins(event) / 60) % 24;
+  if (h >= 6  && h < 12) return 'morning';
+  if (h >= 12 && h < 17) return 'matinee';
   if (h >= 17 && h < 21) return 'evening';
-  return 'night'; // 21:00+ OR 00:00-05:59
+  return 'night';
 }
 
 const timeBucketLabel = {
-  'matinee':   '☀ Matinee',
-  'afternoon': '🌤 Afternoon',
-  'evening':   '🌆 Evening',
-  'night':     '🌙 Night'
+  'morning': '🌅 Morning',
+  'matinee': '☀️ Matinee',
+  'evening': '🌆 Evening',
+  'night':   '🌙 Night',
 };
-const TB_ORDER = ['matinee', 'afternoon', 'evening', 'night'];
+const TB_ORDER = ['morning', 'matinee', 'evening', 'night'];
 
-// Has this event ended? (use inferred end time if no explicit end)
+// Has this event ended?
 function hasEnded(event) {
   const now = new Date();
   const nowMins = now.getHours() * 60 + now.getMinutes();
-  const todayStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
-
-  if (event.d > todayStr) return false; // future date
-  if (event.d < todayStr) return true;  // past date
-
-  // Same day — check time
-  const startMins = effectiveStartMins(event);
-  const explicitEnd = parseTimeStr(event.te);
-  let endMins;
-  if (explicitEnd !== null) {
-    // If explicit end looks earlier than start, it wraps midnight
-    endMins = explicitEnd <= startMins ? explicitEnd + 1440 : explicitEnd;
-  } else {
-    endMins = inferEndMins(startMins, event);
-  }
-
-  // Normalise for comparison (today's clock vs today's event window)
-  if (endMins >= 1440) {
-    // Ends after midnight — not ended unless nowMins is past (endMins % 1440) tomorrow
-    // Simplification: if it's still "today" and end would be tomorrow, not ended
-    return false;
-  }
+  const tStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+  if (event.d > tStr) return false;
+  if (event.d < tStr) return true;
+  const { endMins } = eventTimings(event);
+  if (endMins >= 1440) return false;
   return nowMins > endMins;
 }
 
-// Sort key: midpoint of start + inferred end
+// Sort key: midpoint of start + end
 function midpointMins(event) {
-  const start = effectiveStartMins(event);
-  const end = inferEndMins(start, event);
-  return (start + end) / 2;
+  const { startMins, endMins } = eventTimings(event);
+  return (startMins + endMins) / 2;
 }
 
 // ── Data fetch ────────────────────────────────────────────────────
@@ -641,8 +662,18 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
           style: S.venueLink,
           onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
         }, event.v),
-        event.t && React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', event.t),
-        event.te && React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '–', event.te),
+        (() => {
+          const { startMins, endMins, doorsMins, showMins, endExplicit, hasTime } = eventTimings(event);
+          const parts = [];
+          if (doorsMins !== null && showMins !== null && doorsMins !== showMins)
+            parts.push(`doors ${minsToDisplay(doorsMins)}`);
+          if (hasTime)
+            parts.push((doorsMins !== null && showMins !== null && doorsMins !== showMins)
+              ? `show ${minsToDisplay(showMins)}`
+              : minsToDisplay(startMins));
+          parts.push(`ends ${minsToDisplay(endMins)}${endExplicit ? '' : ' (est.)'}`);
+          return React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', parts.join(' · '));
+        })(),
         event.r && React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', fmtRegion(event.r))
       ),
       // Action buttons — never shrinks, wraps as a unit to the next line if needed
