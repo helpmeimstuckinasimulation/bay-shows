@@ -316,13 +316,9 @@ function classifyDJ(event, djOverrides) {
 const pad = n => String(n).padStart(2, '0');
 
 // Parse "HH:MM" or "H:MM" → minutes since midnight, or null
-// Parse a time string → minutes since midnight, or null.
-// Handles all formats seen in riotlist/19hz: "8pm", "9am", "7:30pm",
-// "8:00 PM", "20:00", "8:00" — bare hour, h:mm±ampm, 24-hr.
 function parseTimeStr(t) {
   if (!t) return null;
   const s = String(t).trim().toLowerCase();
-  // Bare hour + am/pm: "8pm", "12am", "9am"
   const bare = s.match(/^(\d{1,2})(am|pm)$/);
   if (bare) {
     let h = parseInt(bare[1]);
@@ -331,7 +327,6 @@ function parseTimeStr(t) {
     else if (isPM) h += 12;
     return h * 60;
   }
-  // H:MM + am/pm (optional space): "7:30pm", "8:00 PM", "7:30 pm"
   const hm12 = s.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/);
   if (hm12) {
     let h = parseInt(hm12[1]);
@@ -341,7 +336,6 @@ function parseTimeStr(t) {
     else if (isPM) h += 12;
     return h * 60 + m;
   }
-  // 24-hr: "20:00", "8:00" — only if no am/pm suffix
   const hm24 = s.match(/^(\d{1,2}):(\d{2})$/);
   if (hm24) return parseInt(hm24[1]) * 60 + parseInt(hm24[2]);
   return null;
@@ -357,7 +351,7 @@ function minsToDisplay(mins) {
   return `${h12}:${pad(m)} ${ampm}`;
 }
 
-// Format minutes since midnight → "HH:MM" (legacy, still referenced elsewhere)
+// Format minutes since midnight → "HH:MM" (legacy)
 function minsToStr(mins) {
   const h = Math.floor(mins / 60) % 24;
   const m = mins % 60;
@@ -372,8 +366,6 @@ function isWeekendDate(dateStr) {
 }
 
 // Infer end time. Returns minutes since midnight (may exceed 1440).
-// DJ sets: 4hr weekday / 5hr weekend.
-// Live: 45-60 min/act with caps that scale by time of day and weekend.
 function inferEndMins(startMins, event) {
   const numActs = Math.max(artistArray(event.a).length, 1);
   const isWeekend = isWeekendDate(event.d);
@@ -386,13 +378,7 @@ function inferEndMins(startMins, event) {
   return startMins + Math.min(numActs * 60, isWeekend ? 300 : 240);
 }
 
-// Resolve all time fields for an event. Returns:
-//   startMins   — effective show start (t_show > t_doors/t > 19:00 default)
-//   endMins     — explicit or inferred end (may exceed 1440)
-//   doorsMins   — parsed doors time, or null
-//   showMins    — parsed show-start time, or null
-//   endExplicit — true if end came from data
-//   hasTime     — false only when no time data at all
+// Resolve all time fields for an event.
 function eventTimings(event) {
   const showMins  = parseTimeStr(event.t_show  || null);
   const doorsMins = parseTimeStr(event.t_doors || event.t || null);
@@ -434,7 +420,6 @@ const timeBucketLabel = {
 };
 const TB_ORDER = ['morning', 'matinee', 'evening', 'night'];
 
-// Has this event ended?
 function hasEnded(event) {
   const now = new Date();
   const nowMins = now.getHours() * 60 + now.getMinutes();
@@ -446,7 +431,6 @@ function hasEnded(event) {
   return nowMins > endMins;
 }
 
-// Sort key: midpoint of start + end
 function midpointMins(event) {
   const { startMins, endMins } = eventTimings(event);
   return (startMins + endMins) / 2;
@@ -574,8 +558,8 @@ const S = {
   loadingWrap: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '16px', color: 'var(--text3)', fontSize: '12px', letterSpacing: '0.08em' },
   loadingDot: { width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent)', animation: 'pulse 1s ease-in-out infinite' },
   statusBar: { padding: '4px 16px', fontSize: '10px', color: 'var(--text3)', borderTop: '1px solid var(--border2)', flexShrink: 0, display: 'flex', gap: '8px', alignItems: 'center', paddingBottom: 'calc(4px + var(--safe-bottom))', background: 'var(--bg)' },
-  modal: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'flex-end', backdropFilter: 'blur(4px)' },
-  modalInner: { background: 'var(--bg2)', borderRadius: '12px 12px 0 0', padding: '20px 16px', width: '100%', maxHeight: '80vh', overflowY: 'auto', paddingBottom: 'calc(20px + var(--safe-bottom))', border: '1px solid var(--border)', borderBottom: 'none' },
+  modal: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', backdropFilter: 'blur(4px)' },
+  modalInner: { background: 'var(--bg2)', borderRadius: '12px 12px 0 0', padding: '20px 16px', width: '100%', maxWidth: '600px', maxHeight: '80vh', overflowY: 'auto', paddingBottom: 'calc(20px + var(--safe-bottom))', border: '1px solid var(--border)', borderBottom: 'none' },
   modalTitle: { fontSize: '13px', fontWeight: 700, marginBottom: '0', letterSpacing: '0.06em' },
   inputGroup: { marginBottom: '12px' },
   label: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.08em', display: 'block', marginBottom: '4px' },
@@ -809,7 +793,16 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
           return React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
             // Row 1: date/time (left) + action buttons (right), wraps if needed
             React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', flexWrap: 'wrap', marginBottom: '2px' }, onClick: ev => ev.stopPropagation() },
-              React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, flex: '1 1 auto' } }, dateLabel(e.d), e.t ? ` · ${e.t}` : ''),
+              React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, flex: '1 1 auto' } },
+                dateLabel(e.d),
+                (() => {
+                  const { doorsMins, showMins, hasTime } = eventTimings(e);
+                  if (!hasTime) return '';
+                  if (doorsMins !== null && showMins !== null && doorsMins !== showMins)
+                    return ` · doors ${minsToDisplay(doorsMins)} · show ${minsToDisplay(showMins)}`;
+                  return ` · show ${minsToDisplay(showMins !== null ? showMins : doorsMins)}`;
+                })()
+              ),
               React.createElement("div", { style: { display: 'flex', gap: '4px', alignItems: 'center', flex: '0 0 auto', flexWrap: 'wrap' } },
                 e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
                 e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
@@ -902,7 +895,16 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
         return React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
           // Row 1: date/time (left) + action buttons (right), wraps if needed
           React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', flexWrap: 'wrap', marginBottom: '2px' }, onClick: ev => ev.stopPropagation() },
-            React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, flex: '1 1 auto' } }, dateLabel(e.d), e.t ? ` · ${e.t}` : ''),
+            React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, flex: '1 1 auto' } },
+              dateLabel(e.d),
+              (() => {
+                const { doorsMins, showMins, hasTime } = eventTimings(e);
+                if (!hasTime) return '';
+                if (doorsMins !== null && showMins !== null && doorsMins !== showMins)
+                  return ` · doors ${minsToDisplay(doorsMins)} · show ${minsToDisplay(showMins)}`;
+                return ` · show ${minsToDisplay(showMins !== null ? showMins : doorsMins)}`;
+              })()
+            ),
             React.createElement("div", { style: { display: 'flex', gap: '4px', alignItems: 'center', flex: '0 0 auto', flexWrap: 'wrap' } },
               e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
               e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
