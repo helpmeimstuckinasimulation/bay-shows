@@ -686,7 +686,7 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
 }
 
 // ── Artist Panel (slide-up sheet) ─────────────────────────────────
-function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleTag, onToggleTicket, onHide, onVenueClick, onClose }) {
+function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleTag, onToggleTicket, onHide, onVenueClick, onBack, onClose }) {
   const artistEvents = events.filter(e =>
     artistArray(e.a).some(a => a.toLowerCase() === artistName.toLowerCase())
   ).sort((a, b) => a.d < b.d ? -1 : 1);
@@ -706,8 +706,14 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
 
   return React.createElement("div", { style: S.modal, onClick: onClose },
     React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
-      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' } },
-        React.createElement("div", { style: { ...S.modalTitle, marginBottom: '2px' } }, artistName),
+      React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' } },
+        React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 } },
+          onBack && React.createElement("button", {
+            style: { color: 'var(--text3)', fontSize: '16px', lineHeight: 1, padding: '0 4px 0 0', flexShrink: 0, borderRight: '1px solid var(--border2)', paddingRight: '8px' },
+            onClick: onBack, title: 'Go back'
+          }, "←"),
+          React.createElement("div", { style: { ...S.modalTitle, marginBottom: '2px' } }, artistName)
+        ),
         React.createElement("button", { style: { color: 'var(--text3)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }, onClick: onClose }, "×")
       ),
       // Genre + subgenre badges
@@ -793,7 +799,7 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
 }
 
 // ── Venue Panel ───────────────────────────────────────────────────
-function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTicket, onHide, onArtistClick, onClose }) {
+function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTicket, onHide, onArtistClick, onBack, onClose }) {
   const venueEvents = events.filter(e => e.v === venueName).sort((a, b) => a.d < b.d ? -1 : 1);
   const sample = venueEvents[0] || {};
 
@@ -825,8 +831,14 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
   return React.createElement("div", { style: S.modal, onClick: onClose },
     React.createElement("div", { style: S.modalInner, onClick: e => e.stopPropagation() },
       React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' } },
-        React.createElement("div", null,
-          React.createElement("div", { style: { ...S.modalTitle, marginBottom: '2px' } }, venueName),
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+          React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' } },
+            onBack && React.createElement("button", {
+              style: { color: 'var(--text3)', fontSize: '16px', lineHeight: 1, padding: '0 8px 0 0', flexShrink: 0, borderRight: '1px solid var(--border2)' },
+              onClick: onBack, title: 'Go back'
+            }, "←"),
+            React.createElement("div", { style: S.modalTitle }, venueName)
+          ),
           (sample.addr || mapsHref) && React.createElement("a", {
             href: mapsHref || '#',
             target: "_blank", rel: "noopener",
@@ -1199,6 +1211,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [artistPanel, setArtistPanel] = useState(null); // { name, event }
   const [venuePanel, setVenuePanel] = useState(null);   // venueName string
+  const [panelHistory, setPanelHistory] = useState([]); // [{ type:'artist'|'venue', value }]
   const scrollRef = useRef(null);
   const dayRefs = useRef({}); // { [dayKey]: domNode }
 
@@ -1681,8 +1694,20 @@ function App() {
       onToggleTag:   toggleTag,
       onToggleTicket:toggleTicket,
       onHide:        hideEvent,
-      onVenueClick:  (vname) => { setArtistPanel(null); setVenuePanel(vname); },
-      onClose:       () => setArtistPanel(null)
+      onVenueClick:  (vname) => {
+        setPanelHistory(h => [...h, { type: 'artist', value: artistPanel }]);
+        setArtistPanel(null);
+        setVenuePanel(vname);
+      },
+      onBack: panelHistory.length > 0 ? () => {
+        const prev = panelHistory[panelHistory.length - 1];
+        setPanelHistory(h => h.slice(0, -1));
+        setArtistPanel(null);
+        setVenuePanel(null);
+        if (prev.type === 'venue') setVenuePanel(prev.value);
+        else if (prev.type === 'artist') setArtistPanel(prev.value);
+      } : null,
+      onClose: () => { setArtistPanel(null); setPanelHistory([]); }
     }),
     venuePanel && React.createElement(VenuePanel, {
       venueName:     venuePanel,
@@ -1692,8 +1717,20 @@ function App() {
       onToggleTag:   toggleTag,
       onToggleTicket:toggleTicket,
       onHide:        hideEvent,
-      onArtistClick: (name) => { setVenuePanel(null); setArtistPanel({ name }); },
-      onClose:       () => setVenuePanel(null)
+      onArtistClick: (name) => {
+        setPanelHistory(h => [...h, { type: 'venue', value: venuePanel }]);
+        setVenuePanel(null);
+        setArtistPanel({ name });
+      },
+      onBack: panelHistory.length > 0 ? () => {
+        const prev = panelHistory[panelHistory.length - 1];
+        setPanelHistory(h => h.slice(0, -1));
+        setArtistPanel(null);
+        setVenuePanel(null);
+        if (prev.type === 'venue') setVenuePanel(prev.value);
+        else if (prev.type === 'artist') setArtistPanel(prev.value);
+      } : null,
+      onClose: () => { setVenuePanel(null); setPanelHistory([]); }
     }),
     showAdd && React.createElement(AddModal, { onSave: e => { saveManual([e, ...manual]); }, onClose: () => setShowAdd(false) }),
   );
