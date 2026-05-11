@@ -803,13 +803,20 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
     return () => document.removeEventListener('keydown', h);
   }, []);
 
-  const isMobile = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  const isIOS     = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
   const mapsHref = (() => {
     if (sample.lat && sample.lng) {
       const label = encodeURIComponent(venueName);
-      return isMobile
-        ? `geo:${sample.lat},${sample.lng}?q=${sample.lat},${sample.lng}(${label})`
-        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((sample.addr ? sample.addr + ', ' : '') + (sample.city || '') + (sample.state ? ', ' + sample.state : ''))}`;
+      if (isIOS) {
+        // maps.apple.com is exclusively handled by Apple Maps on iOS — geo: can be claimed by any map app
+        return `https://maps.apple.com/?ll=${sample.lat},${sample.lng}&q=${label}`;
+      }
+      if (isAndroid) {
+        return `geo:${sample.lat},${sample.lng}?q=${sample.lat},${sample.lng}(${label})`;
+      }
+      // Desktop: Google Maps
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((sample.addr ? sample.addr + ', ' : '') + (sample.city || '') + (sample.state ? ', ' + sample.state : ''))}`;
     }
     if (sample.maps_url) return sample.maps_url;
     return null;
@@ -846,8 +853,8 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
         return React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
           // Date row
           React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, marginBottom: '2px' } }, dateLabel(e.d), e.t ? ` · ${e.t}` : ''),
-          // Artists as clickable links
-          React.createElement("div", { style: { marginBottom: '4px' } },
+          // Artists as clickable links + genre/subgenre badges inline
+          React.createElement("div", { style: { marginBottom: '4px', display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' } },
             artists.length === 0
               ? React.createElement("span", null, '—')
               : artists.map((artist, ai) =>
@@ -858,7 +865,20 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
                       onClick: (ev) => { ev.stopPropagation(); onArtistClick && onArtistClick(artist, e); }
                     }, artist)
                   )
-                )
+                ),
+            // Genre + subgenre badges inline after artist names
+            ...(() => {
+              const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
+              const genreBadges = (Array.isArray(e.g) ? e.g : [e.g])
+                .filter(gRaw => gRaw && typeof gRaw === 'string' && gRaw.trim() && (() => { const k = resolveGenre(gRaw); return k !== 'other' && GENRE_KEYS_SET.has(k); })())
+                .map(gRaw => ({ key: resolveGenre(gRaw), ...GENRES[resolveGenre(gRaw)] }))
+                .filter((item, idx, arr) => arr.findIndex(x => x.key === item.key) === idx);
+              const sgText = fmtSg(e.sg);
+              return [
+                ...genreBadges.map((g, gi) => React.createElement("span", { key: `g${gi}`, style: { ...S.tag(g.color), fontSize: '9px' } }, g.label)),
+                sgText ? React.createElement("span", { key: 'sg', style: { ...S.tag('#888899'), fontSize: '9px' } }, sgText) : null
+              ].filter(Boolean);
+            })()
           ),
           // Action buttons
           React.createElement("div", { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }, onClick: ev => ev.stopPropagation() },
