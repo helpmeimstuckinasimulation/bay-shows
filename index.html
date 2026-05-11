@@ -628,10 +628,15 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
         (event.age === 'all' || event.age === 'all-ages') && React.createElement("span", { style: S.ageBadge(true) }, "all-ages")
       )
     ),
-    // Row 2: venue/time/region (left) + action buttons (right)
-    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }, onClick: e => e.stopPropagation() },
-      // Venue + time + region
-      React.createElement("div", { style: { ...S.venueLine, flex: 1, flexWrap: 'nowrap', minWidth: 0 } },
+    // Row 2: venue/time/region + action buttons
+    // Single flex-wrap container. The venue div has flex: 1 1 auto with a min-width
+    // so it can share a line with the buttons when there's room, but the buttons wrap
+    // naturally to the next line when they don't fit — no JS line-counting needed.
+    // With genre row below: buttons may wrap early for breathing room; without genre
+    // row: they stay on the same line when venue is short enough.
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', justifyContent: 'space-between' }, onClick: e => e.stopPropagation() },
+      // Venue + time + region — grows to fill available space, wraps if needed
+      React.createElement("div", { style: { ...S.venueLine, flex: '1 1 auto', flexWrap: 'nowrap', minWidth: '120px', maxWidth: '100%' } },
         event.v && React.createElement("span", {
           style: S.venueLink,
           onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
@@ -640,13 +645,13 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
         event.te && React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '–', event.te),
         event.r && React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', fmtRegion(event.r))
       ),
-      // Action buttons (right-aligned)
-      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 } },
+      // Action buttons — never shrinks, wraps as a unit to the next line if needed
+      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flex: '0 0 auto', flexWrap: 'wrap' } },
         event.lk && React.createElement("a", { href: event.lk, target: "_blank", rel: "noopener", style: S.actionBtn }, "info ↗"),
         event.maps_url && React.createElement("a", { href: event.maps_url, target: "_blank", rel: "noopener", style: S.actionBtn }, "map ↗"),
-        React.createElement("a", { href: gcalUrl(event), target: "_blank", rel: "noopener", style: S.actionBtn }, "+ cal"),
+        React.createElement("a", { href: gcalUrl(event), target: "_blank", rel: "noopener", style: S.actionBtn }, "📅"),
         React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag(event.id) }, tagged ? '★' : '☆'),
-        React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket(event.id) }, hasTicket ? '🎫 got tix' : '🎫'),
+        React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket(event.id) }, hasTicket ? '🎫' : '🎟'),
         React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => onHide(event.id) }, "✕"),
         isDJ && React.createElement("button", {
           style: { ...S.actionBtn, fontSize: '9px', color: 'var(--text3)' },
@@ -785,9 +790,9 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
             React.createElement("div", { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }, onClick: ev => ev.stopPropagation() },
               e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
               e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
-              React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "+ cal"),
+              React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "📅"),
               React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
-              React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫 got tix' : '🎫'),
+              React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫' : '🎟'),
               React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => { onHide && onHide(e.id); } }, "✕")
             )
           );
@@ -896,9 +901,9 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
           React.createElement("div", { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }, onClick: ev => ev.stopPropagation() },
             e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
             e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
-            React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "+ cal"),
+            React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "📅"),
             React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
-            React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫 got tix' : '🎫'),
+            React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫' : '🎟'),
             React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => { onHide && onHide(e.id); } }, "✕")
           )
         );
