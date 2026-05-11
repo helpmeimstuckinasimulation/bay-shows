@@ -776,24 +776,25 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
           const tagged = tags && tags[e.id];
           const hasTicket = tickets && tickets[e.id];
           return React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
-            // Date row
-            React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, marginBottom: '2px' } }, dateLabel(e.d), e.t ? ` · ${e.t}` : ''),
-            // Venue as clickable link
-            React.createElement("div", { style: { marginBottom: '4px' } },
+            // Row 1: date/time (left) + action buttons (right), wraps if needed
+            React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', flexWrap: 'wrap', marginBottom: '2px' }, onClick: ev => ev.stopPropagation() },
+              React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, flex: '1 1 auto' } }, dateLabel(e.d), e.t ? ` · ${e.t}` : ''),
+              React.createElement("div", { style: { display: 'flex', gap: '4px', alignItems: 'center', flex: '0 0 auto', flexWrap: 'wrap' } },
+                e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
+                e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
+                React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "📅"),
+                React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
+                React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫' : '🎟'),
+                React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => { onHide && onHide(e.id); } }, "✕")
+              )
+            ),
+            // Row 2: venue as clickable link
+            React.createElement("div", null,
               e.v && React.createElement("span", {
                 style: { color: 'var(--blue)', cursor: 'pointer', borderBottom: '1px dotted var(--blue)44' },
                 onClick: (ev) => { ev.stopPropagation(); onVenueClick && onVenueClick(e.v); }
               }, e.v),
               e.r && React.createElement("span", { style: { color: 'var(--text3)' } }, ` · ${fmtRegion(e.r)}`)
-            ),
-            // Action buttons row
-            React.createElement("div", { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }, onClick: ev => ev.stopPropagation() },
-              e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
-              e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
-              React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "📅"),
-              React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
-              React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫' : '🎟'),
-              React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => { onHide && onHide(e.id); } }, "✕")
             )
           );
         })
@@ -868,10 +869,20 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
         const hasTicket = tickets && tickets[e.id];
         const artists = artistArray(e.a);
         return React.createElement("div", { key: e.id, style: { borderTop: '1px solid var(--border2)', padding: '7px 0', fontSize: '11px', color: 'var(--text2)' } },
-          // Date row
-          React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, marginBottom: '2px' } }, dateLabel(e.d), e.t ? ` · ${e.t}` : ''),
-          // Artists as clickable links + genre/subgenre badges inline
-          React.createElement("div", { style: { marginBottom: '4px', display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' } },
+          // Row 1: date/time (left) + action buttons (right), wraps if needed
+          React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', flexWrap: 'wrap', marginBottom: '2px' }, onClick: ev => ev.stopPropagation() },
+            React.createElement("div", { style: { color: 'var(--text)', fontWeight: 500, flex: '1 1 auto' } }, dateLabel(e.d), e.t ? ` · ${e.t}` : ''),
+            React.createElement("div", { style: { display: 'flex', gap: '4px', alignItems: 'center', flex: '0 0 auto', flexWrap: 'wrap' } },
+              e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
+              e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
+              React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "📅"),
+              React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
+              React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫' : '🎟'),
+              React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => { onHide && onHide(e.id); } }, "✕")
+            )
+          ),
+          // Row 2: artists as clickable links + genre/subgenre badges inline
+          React.createElement("div", { style: { display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' } },
             artists.length === 0
               ? React.createElement("span", null, '—')
               : artists.map((artist, ai) =>
@@ -883,7 +894,6 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
                     }, artist)
                   )
                 ),
-            // Genre + subgenre badges inline after artist names
             ...(() => {
               const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
               const genreBadges = (Array.isArray(e.g) ? e.g : [e.g])
@@ -896,15 +906,6 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
                 sgText ? React.createElement("span", { key: 'sg', style: { ...S.tag('#888899'), fontSize: '9px' } }, sgText) : null
               ].filter(Boolean);
             })()
-          ),
-          // Action buttons
-          React.createElement("div", { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }, onClick: ev => ev.stopPropagation() },
-            e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
-            e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
-            React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "📅"),
-            React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
-            React.createElement("button", { style: S.ticketBtn(!!hasTicket), onClick: () => onToggleTicket && onToggleTicket(e.id) }, hasTicket ? '🎫' : '🎟'),
-            React.createElement("button", { style: S.hideBtn, title: "Hide this event", onClick: () => { onHide && onHide(e.id); } }, "✕")
           )
         );
       })
