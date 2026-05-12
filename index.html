@@ -1995,6 +1995,7 @@ function App() {
     const localAdds = ov.adds.map(e => ({
       ...e,
       _manual: !e.community,
+      _localAdd: true,        // marks ANY local add (manual or community) — never on server events
       _cancelPending: false,
       _editPending:   false,
     }));
@@ -2017,9 +2018,9 @@ function App() {
   const myChangedIds = useMemo(() => {
     const ids = new Set();
     allEvents.forEach(e => {
-      if (e._manual || e.so === 'manual' || e.so === 'community' || e.community) ids.add(e.id);
-      if (e._edited || e._editPending) ids.add(e.id);
-      if (e._cancelled || e._cancelPending) ids.add(e.id);
+      if (e._localAdd) ids.add(e.id);               // local add (manual or community), not yet rebuilt into server feed
+      if (e._edited || e._editPending) ids.add(e.id); // locally edited
+      if (e._cancelPending) ids.add(e.id);           // locally cancelled (pending rebuild)
     });
     return ids;
   }, [allEvents]);
