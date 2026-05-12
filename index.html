@@ -445,9 +445,9 @@ function minsToDisplay(mins) {
   const total = ((mins % 1440) + 1440) % 1440;
   const h24 = Math.floor(total / 60);
   const m   = total % 60;
-  const ampm = h24 < 12 ? 'AM' : 'PM';
+  const ampm = h24 < 12 ? 'am' : 'pm';
   const h12  = h24 % 12 || 12;
-  return `${h12}:${pad(m)} ${ampm}`;
+  return m === 0 ? `${h12}${ampm}` : `${h12}:${pad(m)}${ampm}`;
 }
 
 function minsToStr(mins) {
@@ -666,7 +666,7 @@ const S = {
   searchWrap: { position: 'relative', display: 'flex', alignItems: 'center' },
   searchInput: { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '20px', color: 'var(--text)', fontSize: '16px', padding: '5px 32px 5px 12px', outline: 'none', fontFamily: 'var(--mono)' },
   searchClear: { position: 'absolute', right: '10px', fontSize: '14px', color: 'var(--text3)', lineHeight: 1, padding: '2px 4px', cursor: 'pointer' },
-  moreFiltersPanel: { position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 200, background: 'var(--bg2)', borderRadius: '14px 14px 0 0', border: '1px solid var(--border)', borderBottom: 'none', padding: '16px 16px calc(16px + var(--safe-bottom))', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 -4px 32px rgba(0,0,0,0.5)' },
+  moreFiltersPanel: { position: 'fixed', left: '50%', transform: 'translateX(-50%)', bottom: 0, zIndex: 200, background: 'var(--bg2)', borderRadius: '14px 14px 0 0', border: '1px solid var(--border)', borderBottom: 'none', padding: '16px 16px calc(16px + var(--safe-bottom))', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 -4px 32px rgba(0,0,0,0.5)', width: '100%', maxWidth: '860px' },
   jumpLinks: { display: 'flex', gap: '8px', marginLeft: 'auto' },
   jumpLink: { fontSize: '9px', color: 'var(--text3)', cursor: 'pointer', letterSpacing: '0.05em', textDecoration: 'underline', textDecorationColor: 'var(--border)', padding: '2px 0' },
 };
@@ -975,9 +975,9 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
     // naturally to the next line when they don't fit — no JS line-counting needed.
     // With genre row below: buttons may wrap early for breathing room; without genre
     // row: they stay on the same line when venue is short enough.
-    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', justifyContent: 'space-between' }, onClick: e => e.stopPropagation() },
+    React.createElement("div", { style: { display: 'flex', alignItems: 'flex-start', gap: '4px', flexWrap: 'wrap', justifyContent: 'space-between' }, onClick: e => e.stopPropagation() },
       // Venue + time + region — grows to fill available space, wraps if needed
-      React.createElement("div", { style: { ...S.venueLine, flex: '1 1 auto', flexWrap: 'nowrap', minWidth: '120px', maxWidth: '100%' } },
+      React.createElement("div", { style: { ...S.venueLine, flex: '1 1 auto', flexWrap: 'wrap', minWidth: '120px', maxWidth: '100%' } },
         event.v && React.createElement("span", {
           style: S.venueLink,
           onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
