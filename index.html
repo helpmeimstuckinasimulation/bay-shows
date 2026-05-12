@@ -1678,6 +1678,12 @@ function App() {
     }));
   }, [events, manual, djOverrides]);
 
+  // Sorted unique venue list for AddModal dropdown
+  const venueList = useMemo(() =>
+    [...new Set(allEvents.map(e => e.v).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [allEvents]
+  );
+
   // Filtered events (respects all prefs + search)
   const filtered = useMemo(() => {
     const today = todayStr();
@@ -2100,10 +2106,7 @@ function App() {
       onSave: e => { saveManual([e, ...manual]); },
       onClose: () => setShowAdd(false),
       driveUser,
-      venueList: useMemo(() =>
-        [...new Set(allEvents.map(e => e.v).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
-        [allEvents]
-      ),
+      venueList,
     }),
   );
 }
