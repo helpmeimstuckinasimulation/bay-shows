@@ -969,35 +969,23 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
         (event.age === 'all' || event.age === 'all-ages') && React.createElement("span", { style: S.ageBadge(true) }, "all-ages")
       )
     ),
-    // Row 2: venue/time/region + action buttons
-    // Single flex-wrap container. The venue div has flex: 1 1 auto with a min-width
-    // so it can share a line with the buttons when there's room, but the buttons wrap
-    // naturally to the next line when they don't fit — no JS line-counting needed.
-    // With genre row below: buttons may wrap early for breathing room; without genre
-    // row: they stay on the same line when venue is short enough.
-    React.createElement("div", { style: { display: 'flex', alignItems: 'flex-start', gap: '4px', flexWrap: 'wrap', justifyContent: 'space-between' }, onClick: e => e.stopPropagation() },
-      // Venue + time + region — grows to fill available space, wraps if needed
-      React.createElement("div", { style: { ...S.venueLine, flex: '1 1 auto', flexWrap: 'wrap', minWidth: '120px', maxWidth: '100%' } },
-        event.v && React.createElement("span", {
-          style: S.venueLink,
-          onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
-        }, event.v),
-        (() => {
-          const { startMins, endMins, doorsMins, showMins, endExplicit, hasTime } = eventTimings(event);
-          const parts = [];
-          if (doorsMins !== null && showMins !== null && doorsMins !== showMins)
-            parts.push(`doors ${minsToDisplay(doorsMins)}`);
-          if (hasTime)
-            parts.push((doorsMins !== null && showMins !== null && doorsMins !== showMins)
-              ? `show ${minsToDisplay(showMins)}`
-              : minsToDisplay(startMins));
-          parts.push(`ends ${minsToDisplay(endMins)}${endExplicit ? '' : ' (est.)'}`);
-          return React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', parts.join(' · '));
-        })(),
-        event.r && React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', fmtRegion(event.r))
-      ),
-      // Action buttons — never shrinks, wraps as a unit to the next line if needed
-      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flex: '0 0 auto', flexWrap: 'wrap' } },
+    // Rows 2-3: computed together so buttons placement depends on whether genre badges exist.
+    // No genre → buttons share the venue/time line (flex-wrap handles overflow).
+    // Has genre → venue/time full-width on row 2, genre pills (left) + buttons (right) on row 3.
+    (() => {
+      const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
+      const genreBadges = (Array.isArray(event.g) ? event.g : [event.g])
+        .filter(gRaw => {
+          if (!gRaw || typeof gRaw !== 'string' || !gRaw.trim()) return false;
+          const key = resolveGenre(gRaw);
+          return key !== 'other' && GENRE_KEYS_SET.has(key);
+        })
+        .map(gRaw => ({ key: resolveGenre(gRaw), ...GENRES[resolveGenre(gRaw)] }))
+        .filter((item, idx, arr) => arr.findIndex(x => x.key === item.key) === idx);
+      const sgText = fmtSg(event.sg);
+      const hasBadges = genreBadges.length > 0 || !!sgText;
+
+      const actionButtons = React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flex: '0 0 auto', flexWrap: 'wrap', justifyContent: 'flex-end' } },
         event.lk && React.createElement("a", { href: event.lk, target: "_blank", rel: "noopener", style: S.actionBtn }, "info ↗"),
         event.maps_url && React.createElement("a", { href: event.maps_url, target: "_blank", rel: "noopener", style: S.actionBtn }, "map ↗"),
         React.createElement("a", { href: gcalUrl(event), target: "_blank", rel: "noopener", style: S.actionBtn }, "📅"),
@@ -1019,27 +1007,51 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
           title: 'Mark as DJ/club event',
           onClick: () => onToggleDJ(event.id, 'dj')
         }, "mark DJ")
-      )
-    ),
-    // Row 3: genre + subgenre badges — only when there's something real to show
-    (() => {
-      const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
-      const genreBadges = (Array.isArray(event.g) ? event.g : [event.g])
-        .filter(gRaw => {
-          if (!gRaw || typeof gRaw !== 'string' || !gRaw.trim()) return false;
-          const key = resolveGenre(gRaw);
-          return key !== 'other' && GENRE_KEYS_SET.has(key);
-        })
-        .map(gRaw => ({ key: resolveGenre(gRaw), ...GENRES[resolveGenre(gRaw)] }))
-        .filter((item, idx, arr) => arr.findIndex(x => x.key === item.key) === idx); // dedupe
-      const sgText = fmtSg(event.sg);
-      const hasBadges = genreBadges.length > 0 || !!sgText;
-      if (!hasBadges) return null;
-      return React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', marginTop: '2px' } },
-        genreBadges.map((g, gi) =>
-          React.createElement("span", { key: gi, style: S.tag(g.color) }, g.label)
+      );
+
+      const venueTimeContent = [
+        event.v && React.createElement("span", {
+          key: "v",
+          style: S.venueLink,
+          onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
+        }, event.v),
+        (() => {
+          const { startMins, endMins, doorsMins, showMins, endExplicit, hasTime } = eventTimings(event);
+          const parts = [];
+          if (doorsMins !== null && showMins !== null && doorsMins !== showMins)
+            parts.push(`doors ${minsToDisplay(doorsMins)}`);
+          if (hasTime)
+            parts.push((doorsMins !== null && showMins !== null && doorsMins !== showMins)
+              ? `show ${minsToDisplay(showMins)}`
+              : minsToDisplay(startMins));
+          parts.push(`ends ${minsToDisplay(endMins)}${endExplicit ? '' : ' (est.)'}`);
+          return React.createElement("span", { key: "t", style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', parts.join(' · '));
+        })(),
+        event.r && React.createElement("span", { key: "r", style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', fmtRegion(event.r)),
+      ].filter(Boolean);
+
+      if (!hasBadges) {
+        // No genre: venue+time+region+buttons all in one flex-wrap row
+        return React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', justifyContent: 'space-between' }, onClick: e => e.stopPropagation() },
+          React.createElement("div", { style: { ...S.venueLine, flex: '1 1 auto', flexWrap: 'wrap', minWidth: '120px' } },
+            ...venueTimeContent
+          ),
+          actionButtons
+        );
+      }
+
+      // Has genre: venue+time row, then genre pills (left) + buttons (right)
+      return React.createElement(React.Fragment, null,
+        React.createElement("div", { style: { ...S.venueLine, flexWrap: 'wrap' } },
+          ...venueTimeContent
         ),
-        sgText && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, sgText)
+        React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', justifyContent: 'space-between', marginTop: '3px' }, onClick: e => e.stopPropagation() },
+          React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', flex: '1 1 auto' } },
+            genreBadges.map((g, gi) => React.createElement("span", { key: gi, style: S.tag(g.color) }, g.label)),
+            sgText && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, sgText)
+          ),
+          actionButtons
+        )
       );
     })(),
     event.n && React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', marginTop: '2px', lineHeight: 1.4 } }, event.n)
