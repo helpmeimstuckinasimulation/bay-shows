@@ -2012,14 +2012,17 @@ function App() {
   );
 
   // IDs of all locally-modified events (adds + edits + cancels)
+  // IDs of all locally-modified events — derived from allEvents (the already-merged
+  // result) so it stays in sync without any separate localStorage read or dep juggling.
   const myChangedIds = useMemo(() => {
-    const ov = loadOverrides();
     const ids = new Set();
-    ov.adds.forEach(e => ids.add(e.id));
-    ov.edits.forEach(e => ids.add(e.event_id));
-    ov.cancels.forEach(e => ids.add(e.event_id));
+    allEvents.forEach(e => {
+      if (e._manual || e.so === 'manual' || e.so === 'community' || e.community) ids.add(e.id);
+      if (e._edited || e._editPending) ids.add(e.id);
+      if (e._cancelled || e._cancelPending) ids.add(e.id);
+    });
     return ids;
-  }, [manual]); // manual bump triggers recompute after any override write
+  }, [allEvents]);
 
   // Filtered events (respects all prefs + search)
   const filtered = useMemo(() => {
@@ -2267,7 +2270,7 @@ function App() {
           [['today', 'Today'], ['week', 'Week'], ['month', 'All']].map(([v, l]) =>
             React.createElement("button", { key: v, style: S.sectionBtn(prefs.view === v && !myChangesView), onClick: () => { setMyChangesView(false); savePrefs({ ...prefs, view: v }); } }, l)
           ),
-          React.createElement("button", {
+          driveUser && React.createElement("button", {
             key: 'mychanges',
             style: { ...S.sectionBtn(myChangesView), borderRight: 'none' },
             onClick: () => setMyChangesView(v => !v)
