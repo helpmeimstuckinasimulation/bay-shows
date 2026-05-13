@@ -74,8 +74,6 @@ const HIDDEN_KEY   = 'bay-hidden-v1';   // { [eventId]: epochMs }
 const TICKETS_KEY  = 'bay-tickets-v1';  // { [eventId]: epochMs }
 const DJ_OVERRIDE_KEY = 'bay-dj-override-v1'; // { [eventId]: 'live'|'dj' }
 const OVERRIDES_KEY   = 'bay-overrides-v1';  // { adds:[...], edits:[...], cancels:[...] }
-const MY_IDS_KEY          = 'bay-my-ids-v1';      // persistent set of IDs this user has ever touched
-const MY_IDS_MIGRATED_KEY = 'bay-my-ids-migrated-v1'; // flag: cache-scan migration has run
 const TTL_MS       = 6 * 60 * 60 * 1000;
 
 const GOOG_CLIENT_ID  = '1030489561991-kbu11qmn3o58ahu69d27f3g09qhai1ns.apps.googleusercontent.com';
@@ -89,6 +87,7 @@ const COMMUNITY_ENDPOINT = WEB_APP_URL;  // same Web App handles both GET and PO
 const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
 const GOOG_PREFS_FILE = 'bay_shows_prefs.json';
 const GOOG_TAGS_FILE  = 'bay_shows_tags.json';
+const GOOG_MY_IDS_FILE = 'bay_shows_my_ids.json';
 const GDRIVE_FILEID_KEY = 'bay-gdrive-fileid-v1';
 
 const _driveFileIds = (() => {
@@ -308,17 +307,19 @@ function loadOverrides() {
 
 function saveOverrides(ov) { lsSet(OVERRIDES_KEY, ov); }
 
+const MY_IDS_KEY          = 'bay-my-ids-v1';
+const MY_IDS_MIGRATED_KEY = 'bay-my-ids-migrated-v1';
+
 function loadMyIds() {
   try { return new Set(JSON.parse(localStorage.getItem(MY_IDS_KEY) || '[]')); } catch { return new Set(); }
 }
-function addMyId(id) {
-  const ids = loadMyIds();
-  ids.add(id);
+function saveMyIds(ids) {
   try { localStorage.setItem(MY_IDS_KEY, JSON.stringify([...ids])); } catch {}
 }
-// Seed MY_IDS_KEY from ov.adds and any uc-add-/community-/manual- prefixed server events.
-// Merges into the existing set, so safe to re-run. Uses a flag to skip the cache scan
-// after the first successful run (it can be slow on large caches).
+function addMyId(id) {
+  const ids = loadMyIds(); ids.add(id); saveMyIds(ids);
+}
+// One-time migration: seed from ov.adds + cache scan for prefixed IDs.
 function migrateMyIds() {
   try {
     if (localStorage.getItem(MY_IDS_MIGRATED_KEY)) return;
@@ -330,7 +331,7 @@ function migrateMyIds() {
       if (e.id && (e.id.startsWith('uc-add-') || e.id.startsWith('community-') || e.id.startsWith('manual-')))
         ids.add(e.id);
     });
-    localStorage.setItem(MY_IDS_KEY, JSON.stringify([...ids]));
+    saveMyIds(ids);
     localStorage.setItem(MY_IDS_MIGRATED_KEY, '1');
   } catch {}
 }
@@ -1918,6 +1919,14 @@ function App() {
       try { await driveWrite(tok, GOOG_TAGS_FILE, tagObj); } catch {}
     }, 600);
   }
+  const _debouncedMyIdsWrite = useRef(null);
+  if (!_debouncedMyIdsWrite.current) {
+    _debouncedMyIdsWrite.current = debounce(async () => {
+      const tok = await getOrRefreshToken();
+      if (!tok) return;
+      try { await driveWrite(tok, GOOG_MY_IDS_FILE, [...loadMyIds()]); } catch {}
+    }, 1200);
+  }
 
   const runDriveSync = useCallback(async (token) => {
     setDriveSyncing(true);
@@ -1944,6 +1953,13 @@ function App() {
         await driveWrite(token, GOOG_TAGS_FILE, localTags);
         setDriveSyncMsg(`Signed in · ${Object.keys(localTags).length} shows backed up`);
       }
+      // Sync my-ids: merge local + remote, write back merged set to both
+      const localMyIds = loadMyIds();
+      const driveMyIds = await driveRead(token, GOOG_MY_IDS_FILE);
+      const mergedMyIds = new Set([...localMyIds, ...(driveMyIds || [])]);
+      saveMyIds(mergedMyIds);
+      setOverridesTick(t => t + 1); // re-render Mine count with synced ids
+      await driveWrite(token, GOOG_MY_IDS_FILE, [...mergedMyIds]);
     } catch (e) { setDriveSyncMsg('Sync error: ' + e.message); }
     finally { setDriveSyncing(false); setTimeout(() => setDriveSyncMsg(''), 6000); }
   }, [prefs]);
@@ -2000,6 +2016,7 @@ function App() {
     // before calling onSave, so rebuilding from m (stale React state) would drop events.
     setManual(m); lsSet(MANUAL_KEY, m);
     setOverridesTick(t => t + 1);
+    _debouncedMyIdsWrite.current();
   };
 
   const load = useCallback(async (force = false) => {
@@ -2092,10 +2109,7 @@ function App() {
   // IDs of all locally-modified events (adds + edits + cancels)
   // IDs of all locally-modified events — derived from allEvents (the already-merged
   // result) so it stays in sync without any separate localStorage read or dep juggling.
-  // MY_IDS_KEY is the authoritative source — survives rebuilds.
-  // overridesTick in deps ensures recompute after any local write.
   const myChangedIds = useMemo(() => loadMyIds(), [overridesTick]);
-  // (unused stub to satisfy linter — allEvents already computed above)
 
   // Filtered events (respects all prefs + search)
   const filtered = useMemo(() => {
@@ -2249,6 +2263,7 @@ function App() {
     if (idx >= 0) ov.edits[idx] = entry; else ov.edits.push(entry);
     saveOverrides(ov);
     setOverridesTick(t => t + 1);
+    _debouncedMyIdsWrite.current();
 
     if (driveUser && COMMUNITY_ENDPOINT) {
       try {
@@ -2266,6 +2281,7 @@ function App() {
       ov.cancels.push({ event_id, submittedAt: now });
       saveOverrides(ov);
       setOverridesTick(t => t + 1);
+      _debouncedMyIdsWrite.current();
     }
 
     if (driveUser && COMMUNITY_ENDPOINT) {
