@@ -48,6 +48,7 @@
     const WORKER_BASE     = 'https://bay-shows-auth.dranahan.workers.dev';
     const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
     const APP_ORIGIN      = 'https://helpmeimstuckinasimulation.github.io';
+    const APP_URL         = 'https://helpmeimstuckinasimulation.github.io/bay-shows/';
 
     function setStatus(msg) { document.getElementById('status').textContent = msg; }
     function showError(msg) {
@@ -82,7 +83,6 @@
           'token_exchange_failed':      'Google token exchange failed. Try again.',
         };
         showError(messages[error] || `Sign-in error: ${error}`);
-        // Also notify opener of failure so it can reject cleanly
         if (window.opener) {
           try {
             window.opener.postMessage(
@@ -100,32 +100,51 @@
           expires_at:   Date.now() + expiresIn * 1000,
         };
 
-        // 1. Write to localStorage (fallback for non-isolated contexts)
+        // 1. Write to localStorage
         try { localStorage.setItem(GDRIVE_AUTH_KEY, JSON.stringify(tokenData)); } catch(e) {}
 
-        // 2. postMessage to opener — works even when localStorage is isolated
-        //    (iOS Safari standalone PWA has separate localStorage per context)
+        // 2. postMessage to opener (standard browsers / Safari PWA)
+        let openerNotified = false;
         if (window.opener) {
           try {
             window.opener.postMessage(
               { type: 'BAY_SHOWS_AUTH', ...tokenData },
               APP_ORIGIN
             );
+            openerNotified = true;
           } catch(e) {}
         }
 
-        // 3. Also try BroadcastChannel for same-origin cases where opener ref is lost
+        // 3. BroadcastChannel (same-origin, opener ref lost)
         try {
           const bc = new BroadcastChannel('bay_shows_auth');
           bc.postMessage({ type: 'BAY_SHOWS_AUTH', ...tokenData });
           setTimeout(() => bc.close(), 1000);
         } catch(e) {}
 
-        // Clean URL so token doesn't linger in history
-        window.history.replaceState(null, '', window.location.pathname);
+        // 4. Redirect fallback for privacy browsers (Firefox Focus, Brave, etc.)
+        //    that block cross-tab postMessage and BroadcastChannel.
+        //    Pass token in hash fragment — never logged by servers, stripped by
+        //    the app immediately after reading.
+        //    Wait 900ms to give postMessage a chance to work first; if the tab
+        //    is still open after that, the opener didn't receive it, so redirect.
         showSuccess();
-        // Give postMessage time to deliver before closing
-        setTimeout(() => { try { window.close(); } catch(e) {} }, 800);
+        // Clean the ?access_token= from the URL bar immediately
+        window.history.replaceState(null, '', window.location.pathname);
+
+        setTimeout(() => {
+          // Try to close (works when opened via window.open in non-Focus browsers)
+          try { window.close(); } catch(e) {}
+          // If still open after another tick, redirect to app with hash
+          setTimeout(() => {
+            if (!document.hidden) {
+              window.location.replace(
+                `${APP_URL}#bay_auth=${encodeURIComponent(JSON.stringify(tokenData))}`
+              );
+            }
+          }, 200);
+        }, 900);
+
         return;
       }
 
