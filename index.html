@@ -632,7 +632,7 @@ const S = {
   dayGroup: { padding: '0' },
   dayHeader: { padding: '8px 16px 5px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.12em', color: 'var(--text3)', textTransform: 'uppercase', position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 5, borderBottom: '1px solid var(--border2)' },
   timeDivider: { padding: '4px 16px', fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.08em', borderBottom: '1px solid var(--border2)', background: 'var(--bg2)' },
-  card: { padding: '9px 16px', borderBottom: '1px solid var(--border2)', display: 'flex', flexDirection: 'column', gap: '3px', transition: 'background 0.1s', background: 'transparent' },
+  card: { padding: '7px 16px', borderBottom: '1px solid var(--border2)', display: 'flex', flexDirection: 'column', gap: '2px', transition: 'background 0.1s', background: 'transparent' },
   artistName: { fontSize: '13px', fontWeight: 500, color: 'var(--text)', letterSpacing: '0.02em', lineHeight: 1.3 },
   artistLink: { color: 'var(--text)', cursor: 'pointer', borderBottom: '1px dotted var(--border)', paddingBottom: '1px' },
   venueLine: { fontSize: '11px', color: 'var(--text2)', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' },
@@ -920,48 +920,81 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
 
   const artists = artistArray(event.a);
 
+  // Compute genre badges once for use in row 1
+  const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
+  const genreBadges = (Array.isArray(event.g) ? event.g : [event.g])
+    .filter(gRaw => {
+      if (!gRaw || typeof gRaw !== 'string' || !gRaw.trim()) return false;
+      const key = resolveGenre(gRaw);
+      return key !== 'other' && GENRE_KEYS_SET.has(key);
+    })
+    .map(gRaw => ({ key: resolveGenre(gRaw), ...GENRES[resolveGenre(gRaw)] }))
+    .filter((item, idx, arr) => arr.findIndex(x => x.key === item.key) === idx);
+  const sgText = fmtSg(event.sg);
+
+  // Venue + time string for row 2 left
+  const venueTimeParts = (() => {
+    const { startMins, endMins, doorsMins, showMins, endExplicit, hasTime } = eventTimings(event);
+    const parts = [];
+    if (doorsMins !== null && showMins !== null && doorsMins !== showMins)
+      parts.push(`doors ${minsToDisplay(doorsMins)}`);
+    if (hasTime)
+      parts.push((doorsMins !== null && showMins !== null && doorsMins !== showMins)
+        ? `show ${minsToDisplay(showMins)}`
+        : minsToDisplay(startMins));
+    // Estimated end: ~Xpm; explicit end: ends Xpm
+    parts.push(endExplicit ? `ends ${minsToDisplay(endMins)}` : `~${minsToDisplay(endMins)}`);
+    return parts;
+  })();
+
+  // Inline badge style — smaller than artist name, vertically centered
+  const inlineBadge = (color) => ({
+    display: 'inline-block', fontSize: '8px', padding: '1px 4px',
+    borderRadius: '2px', background: color + '22', color: color,
+    border: `1px solid ${color}44`, letterSpacing: '0.05em',
+    verticalAlign: 'middle', lineHeight: '1.4', flexShrink: 0,
+  });
+
   return React.createElement("div", {
     className: 'card-hover',
     style: { ...S.card, position: 'relative' }
   },
-    // Row 1: artist names + price/age (right)
+    // Row 1: artist names + inline genre badges (left) | price + age (right)
     React.createElement("div", { style: { display: 'flex', alignItems: 'flex-start', gap: '8px' } },
-      React.createElement("div", { style: { ...S.artistName, flex: 1 } },
+      // Left: artists + all inline badges on same wrapping line
+      React.createElement("div", { style: { ...S.artistName, flex: 1, display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px', rowGap: '3px' } },
         artists.length === 0
           ? React.createElement("span", { style: S.artistLink, onClick: () => onVenueClick && onVenueClick(event.v) }, event.v)
           : artists.map((artist, ai) =>
               React.createElement(React.Fragment, { key: ai },
-                ai > 0 && React.createElement("span", { style: { color: 'var(--text3)' } }, ' · '),
+                ai > 0 && React.createElement("span", { style: { color: 'var(--text3)' } }, '·'),
                 React.createElement("span", {
                   style: S.artistLink,
                   onClick: (e) => { e.stopPropagation(); onArtistClick && onArtistClick(artist, event); }
                 }, artist)
               )
             ),
-        newEvent && React.createElement("span", { style: { ...S.newBadge, marginLeft: '6px' } }, "NEW"),
-        tagged && React.createElement("span", { style: { ...S.tag('#e8ff47'), marginLeft: '6px' } }, "★"),
-        hasTicket && React.createElement("span", { style: { ...S.tag('var(--green)'), marginLeft: '6px' } }, "🎫"),
-        isDJ && React.createElement("span", { style: { ...S.djBadge, marginLeft: '6px' } }, "DJ"),
-        event.rec && React.createElement("span", { style: { ...S.tag('#888855'), marginLeft: '6px', fontSize: '9px' } }, "recurring"),
+        // Genre + subgenre badges inline
+        genreBadges.map((g, gi) =>
+          React.createElement("span", { key: `g${gi}`, style: inlineBadge(g.color) }, g.label)
+        ),
+        sgText && React.createElement("span", { style: inlineBadge('#888899') }, sgText),
+        // Status badges
+        newEvent && React.createElement("span", { style: inlineBadge('var(--accent)') }, "NEW"),
+        isDJ && React.createElement("span", { style: inlineBadge('#5b6cff') }, "DJ"),
+        event.rec && React.createElement("span", { style: inlineBadge('#888855') }, "recurring"),
         (event.community || event._manual || event.so === 'community' || event.so === 'manual') &&
           React.createElement("span", {
-            style: { ...S.tag('#4488cc'), marginLeft: '6px', fontSize: '9px' },
+            style: inlineBadge('#4488cc'),
             title: event.submittedBy ? `submitted by ${event.submittedBy}` : 'community submission'
           }, event.community || event.so === 'community' ? "community" : "local"),
-        // Edited badge (pencil) — blue, same style as community badge
         event._edited && React.createElement("span", {
-          style: { ...S.tag('#47b8ff'), marginLeft: '6px', fontSize: '9px' },
+          style: inlineBadge('#47b8ff'),
           title: event._editedBy ? `edited by ${event._editedBy}` : 'edited'
         }, "✏"),
-        // Pending badge — amber, shown when edit or cancel is awaiting next build
-        (event._editPending || event._cancelPending) && React.createElement("span", {
-          style: { fontSize: '9px', padding: '1px 5px', borderRadius: '2px',
-                   background: '#f59e0b22', color: '#f59e0b',
-                   border: '1px solid #f59e0b44', letterSpacing: '0.05em',
-                   flexShrink: 0, marginLeft: '6px' }
-        }, "Pending")
+        (event._editPending || event._cancelPending) && React.createElement("span", { style: inlineBadge('#f59e0b') }, "pending")
       ),
-      // Price + age (top-right)
+      // Right: price + age
       React.createElement("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px', flexShrink: 0 } },
         event.p === '0' || event.p === 0 || event.pr === 'free'
           ? React.createElement("span", { style: S.priceBadge }, "FREE")
@@ -969,23 +1002,20 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
         (event.age === 'all' || event.age === 'all-ages') && React.createElement("span", { style: S.ageBadge(true) }, "all-ages")
       )
     ),
-    // Rows 2-3: computed together so buttons placement depends on whether genre badges exist.
-    // No genre → buttons share the venue/time line (flex-wrap handles overflow).
-    // Has genre → venue/time full-width on row 2, genre pills (left) + buttons (right) on row 3.
-    (() => {
-      const GENRE_KEYS_SET = new Set(Object.keys(GENRES).filter(k => k !== 'other'));
-      const genreBadges = (Array.isArray(event.g) ? event.g : [event.g])
-        .filter(gRaw => {
-          if (!gRaw || typeof gRaw !== 'string' || !gRaw.trim()) return false;
-          const key = resolveGenre(gRaw);
-          return key !== 'other' && GENRE_KEYS_SET.has(key);
-        })
-        .map(gRaw => ({ key: resolveGenre(gRaw), ...GENRES[resolveGenre(gRaw)] }))
-        .filter((item, idx, arr) => arr.findIndex(x => x.key === item.key) === idx);
-      const sgText = fmtSg(event.sg);
-      const hasBadges = genreBadges.length > 0 || !!sgText;
-
-      const actionButtons = React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flex: '0 0 auto', flexWrap: 'wrap', justifyContent: 'flex-end' } },
+    // Row 2: venue + times (left) | action buttons (right)
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', justifyContent: 'space-between', marginTop: '2px' }, onClick: e => e.stopPropagation() },
+      // Left: venue + times
+      React.createElement("div", { style: { ...S.venueLine, flex: '1 1 auto', flexWrap: 'wrap', minWidth: '120px' } },
+        event.v && React.createElement("span", {
+          style: S.venueLink,
+          onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
+        }, event.v),
+        venueTimeParts.length > 0 && React.createElement("span", { style: { color: 'var(--text3)', whiteSpace: 'nowrap' } },
+          '· ', venueTimeParts.join(' · ')
+        )
+      ),
+      // Right: action buttons
+      React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flex: '0 0 auto', flexWrap: 'wrap', justifyContent: 'flex-end' } },
         event.lk && React.createElement("a", { href: event.lk, target: "_blank", rel: "noopener", style: S.actionBtn }, "info ↗"),
         event.maps_url && React.createElement("a", { href: event.maps_url, target: "_blank", rel: "noopener", style: S.actionBtn }, "map ↗"),
         React.createElement("a", { href: gcalUrl(event), target: "_blank", rel: "noopener", style: S.actionBtn }, "📅"),
@@ -1007,53 +1037,8 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
           title: 'Mark as DJ/club event',
           onClick: () => onToggleDJ(event.id, 'dj')
         }, "mark DJ")
-      );
-
-      const venueTimeContent = [
-        event.v && React.createElement("span", {
-          key: "v",
-          style: S.venueLink,
-          onClick: (e) => { e.stopPropagation(); onVenueClick && onVenueClick(event.v, event); }
-        }, event.v),
-        (() => {
-          const { startMins, endMins, doorsMins, showMins, endExplicit, hasTime } = eventTimings(event);
-          const parts = [];
-          if (doorsMins !== null && showMins !== null && doorsMins !== showMins)
-            parts.push(`doors ${minsToDisplay(doorsMins)}`);
-          if (hasTime)
-            parts.push((doorsMins !== null && showMins !== null && doorsMins !== showMins)
-              ? `show ${minsToDisplay(showMins)}`
-              : minsToDisplay(startMins));
-          parts.push(`ends ${minsToDisplay(endMins)}${endExplicit ? '' : ' (est.)'}`);
-          return React.createElement("span", { key: "t", style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', parts.join(' · '));
-        })(),
-        event.r && React.createElement("span", { key: "r", style: { color: 'var(--text3)', whiteSpace: 'nowrap' } }, '· ', fmtRegion(event.r)),
-      ].filter(Boolean);
-
-      if (!hasBadges) {
-        // No genre: venue+time+region+buttons all in one flex-wrap row
-        return React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', justifyContent: 'space-between' }, onClick: e => e.stopPropagation() },
-          React.createElement("div", { style: { ...S.venueLine, flex: '1 1 auto', flexWrap: 'wrap', minWidth: '120px' } },
-            ...venueTimeContent
-          ),
-          actionButtons
-        );
-      }
-
-      // Has genre: venue+time row, then genre pills (left) + buttons (right)
-      return React.createElement(React.Fragment, null,
-        React.createElement("div", { style: { ...S.venueLine, flexWrap: 'wrap' } },
-          ...venueTimeContent
-        ),
-        React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', justifyContent: 'space-between', marginTop: '3px' }, onClick: e => e.stopPropagation() },
-          React.createElement("div", { style: { display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center', flex: '1 1 auto' } },
-            genreBadges.map((g, gi) => React.createElement("span", { key: gi, style: S.tag(g.color) }, g.label)),
-            sgText && React.createElement("span", { style: { ...S.tag('#888899'), fontSize: '9px' } }, sgText)
-          ),
-          actionButtons
-        )
-      );
-    })(),
+      )
+    ),
     event.n && React.createElement("div", { style: { fontSize: '10px', color: 'var(--text3)', marginTop: '2px', lineHeight: 1.4 } }, event.n)
   );
 }
@@ -1307,6 +1292,7 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
     timeRange:     prefs.timeRange     || [0, 1439],
     recencyMode:   prefs.recencyMode   || 'da',
     recencyWindow: prefs.recencyWindow || null,
+    dateRange:     prefs.dateRange     || null,
   });
   const toggle = k => setLocal(p => ({ ...p, [k]: !p[k] }));
 
@@ -1372,11 +1358,63 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
     ['night',   '🌙 Night',    '9 PM+'],
   ];
 
+  const dateRangeActive = (w) => {
+    if (!local.dateRange) return false;
+    if (w === 'today' || w === 'thisWeekend') return local.dateRange === w;
+    if (w === 'custom') return typeof local.dateRange === 'object' && local.dateRange !== null;
+    return false;
+  };
+  const setDateRange = (w) => {
+    if (dateRangeActive(w)) { setLocal(p => ({ ...p, dateRange: null })); return; }
+    if (w === 'custom') { setLocal(p => ({ ...p, dateRange: { from: todayStr(), to: '' } })); return; }
+    setLocal(p => ({ ...p, dateRange: w }));
+  };
+  const fmtDateLabel = ds => {
+    if (!ds) return '';
+    const [y, m, d] = ds.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  };
+
   return React.createElement("div", { style: S.moreFiltersPanel, onClick: e => e.stopPropagation() },
     // drag handle
     React.createElement("div", { style: { width: '36px', height: '4px', borderRadius: '2px', background: 'var(--border)', margin: '0 auto 14px' } }),
 
-    // ── Recency ──
+    // ── Date range ──
+    React.createElement(SectionHead, null, "DATE RANGE"),
+    React.createElement("div", { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' } },
+      React.createElement("button", { style: chip(dateRangeActive('today')), onClick: () => setDateRange('today') }, "today"),
+      React.createElement("button", { style: chip(dateRangeActive('thisWeekend')), onClick: () => setDateRange('thisWeekend') }, "this weekend"),
+      React.createElement("button", { style: chip(dateRangeActive('custom')), onClick: () => setDateRange('custom') }, "custom range"),
+    ),
+    dateRangeActive('custom') && React.createElement("div", { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px', alignItems: 'center' } },
+      React.createElement("div", { style: { display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 } },
+        React.createElement("label", { style: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.08em' } }, "FROM"),
+        React.createElement("input", {
+          type: 'date',
+          value: (local.dateRange && local.dateRange.from) || todayStr(),
+          min: todayStr(),
+          style: { background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '12px', padding: '6px 8px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%' },
+          onChange: e => setLocal(p => ({ ...p, dateRange: { ...(p.dateRange || {}), from: e.target.value } }))
+        })
+      ),
+      React.createElement("div", { style: { display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 } },
+        React.createElement("label", { style: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.08em' } }, "TO"),
+        React.createElement("input", {
+          type: 'date',
+          value: (local.dateRange && local.dateRange.to) || '',
+          min: (local.dateRange && local.dateRange.from) || todayStr(),
+          style: { background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '12px', padding: '6px 8px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%' },
+          onChange: e => setLocal(p => ({ ...p, dateRange: { ...(p.dateRange || {}), to: e.target.value } }))
+        })
+      )
+    ),
+    local.dateRange && React.createElement("button", {
+      style: { fontSize: '10px', color: 'var(--text3)', textDecoration: 'underline', marginBottom: '4px', display: 'block' },
+      onClick: () => setLocal(p => ({ ...p, dateRange: null }))
+    }, "clear"),
+
+    React.createElement(Divider, null),
+
     React.createElement(SectionHead, null, "RECENCY"),
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' } },
       ...['da', 'dm'].map((mode, i) => [
@@ -1718,7 +1756,6 @@ function App() {
   const [djOverrides, setDjOverrides] = useState(() => lsGet(DJ_OVERRIDE_KEY, {}));
   const [manual, setManual] = useState(() => lsGet(MANUAL_KEY, []));
   const PREFS_DEFAULTS = {
-    view: 'week',
     regions: [],
     genres: [],
     freeOnly: false,
@@ -1731,20 +1768,18 @@ function App() {
     showStarredNoTicket: false,
     hideRecurring: false,
     recurringOnly: false,
-    timeBuckets: [],        // [] = no filter; subset of 'morning'|'matinee'|'evening'|'night'
-    timeRange: [0, 1439],   // [startMin, endMin] — mins since midnight
-    recencyMode: 'da',      // 'da' = date added, 'dm' = date modified
-    recencyWindow: null,    // null | '1d' | '7d' | { since: 'YYYY-MM-DD' }
+    timeBuckets: [],
+    timeRange: [0, 1439],
+    recencyMode: 'da',
+    recencyWindow: null,
+    dateRange: null,
   };
   const [prefs, setPrefs] = useState(() => {
     // Always merge defaults first so new keys are never undefined
     const stored = lsGet(PREFS_KEY, {});
     const saved = { ...PREFS_DEFAULTS, ...stored };
-    const urlView = new URLSearchParams(window.location.search).get('view');
-    if (urlView && ['today', 'week', 'month'].includes(urlView)) saved.view = urlView;
     return saved;
   });
-  const [expandedDays, setExpandedDays] = useState(() => new Set());
   const [showAdd, setShowAdd] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null); // event object being edited
   const [myChangesView, setMyChangesView] = useState(false); // session-only, not persisted
@@ -1949,10 +1984,6 @@ function App() {
       }
       setEvents(fetched);
       setArtistLinks(fetchedLinks || {});
-      const t = todayStr();
-      const tmrw = new Date(); tmrw.setDate(tmrw.getDate() + 1);
-      const tmrwStr = `${tmrw.getFullYear()}-${pad(tmrw.getMonth()+1)}-${pad(tmrw.getDate())}`;
-      setExpandedDays(new Set([t, tmrwStr]));
       setCacheInfo({ fromCache, ts, meta });
     } catch (err) {
       setError(err.message);
@@ -2118,12 +2149,27 @@ function App() {
         const haystack = [fmtA(e.a), e.v, fmtSg(e.sg), e.n].filter(Boolean).join(' ').toLowerCase();
         if (!haystack.includes(q)) return false;
       }
-      // View window
-      if (prefs.view === 'today') return e.d === today;
-      if (prefs.view === 'week') {
-        const limit = new Date(); limit.setDate(limit.getDate() + 7);
-        const [y, m, d] = e.d.split('-').map(Number);
-        return new Date(y, m - 1, d) <= limit;
+      // Date range filter
+      if (prefs.dateRange) {
+        if (prefs.dateRange === 'today') {
+          if (e.d !== today) return false;
+        } else if (prefs.dateRange === 'thisWeekend') {
+          const [ey, em, ed] = e.d.split('-').map(Number);
+          const dow = new Date(ey, em - 1, ed).getDay();
+          // Find coming Friday and Sunday
+          const now = new Date();
+          const todayDow = now.getDay();
+          // Days until Friday (5): if today is Mon(1) → 4 days ahead; wrap Sun(0) → 5 days ahead
+          const daysToFri = (5 - todayDow + 7) % 7 || 7;
+          const fri = new Date(now); fri.setDate(now.getDate() + (todayDow === 5 ? 0 : todayDow === 6 ? 6 : daysToFri));
+          const sun = new Date(fri); sun.setDate(fri.getDate() + 2);
+          const friStr = `${fri.getFullYear()}-${pad(fri.getMonth()+1)}-${pad(fri.getDate())}`;
+          const sunStr = `${sun.getFullYear()}-${pad(sun.getMonth()+1)}-${pad(sun.getDate())}`;
+          if (e.d < friStr || e.d > sunStr) return false;
+        } else if (prefs.dateRange && typeof prefs.dateRange === 'object') {
+          if (prefs.dateRange.from && e.d < prefs.dateRange.from) return false;
+          if (prefs.dateRange.to   && e.d > prefs.dateRange.to)   return false;
+        }
       }
       return true;
     }).sort((a, b) => {
@@ -2147,26 +2193,9 @@ function App() {
   const dayKeys = Object.keys(grouped).sort();
   const today = todayStr();
 
-  // Expand ALL days initially (and on full expand)
-  const expandAll = () => setExpandedDays(new Set(dayKeys));
-  const collapseAll = () => setExpandedDays(new Set());
-
-  // Auto-expand all days on initial load and whenever filters change
-  useEffect(() => {
-    if (dayKeys.length > 0) setExpandedDays(new Set(dayKeys));
-  }, [dayKeys.join(',')]);
-
-  const toggleDay = (day) => {
-    const next = new Set(expandedDays);
-    next.has(day) ? next.delete(day) : next.add(day);
-    setExpandedDays(next);
-  };
-
   // Jump to a day key by scrolling its ref into view
   const jumpTo = (dayKey) => {
     if (!dayKey) return;
-    // Expand that day first
-    setExpandedDays(prev => { const s = new Set(prev); s.add(dayKey); return s; });
     setTimeout(() => {
       const el = dayRefs.current[dayKey];
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2232,6 +2261,7 @@ function App() {
     prefs.timeBuckets && prefs.timeBuckets.length > 0,
     prefs.timeRange && (prefs.timeRange[0] > 0 || prefs.timeRange[1] < 1439),
     !!prefs.recencyWindow,
+    !!prefs.dateRange,
   ].filter(Boolean).length;
 
   return React.createElement("div", { style: S.app },
@@ -2277,20 +2307,23 @@ function App() {
               }))
         )
       ),
-      // View toggle + expand/collapse controls
+      // View controls row
       React.createElement("div", { style: { display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' } },
         React.createElement("div", { style: S.sectionToggle },
-          [['today', 'Today'], ['week', 'Week'], ['month', 'All']].map(([v, l]) =>
-            React.createElement("button", { key: v, style: S.sectionBtn(prefs.view === v && !myChangesView), onClick: () => { setMyChangesView(false); savePrefs({ ...prefs, view: v }); } }, l)
-          ),
           driveUser && React.createElement("button", {
             key: 'mychanges',
             style: { ...S.sectionBtn(myChangesView), borderRight: 'none' },
             onClick: () => setMyChangesView(v => !v)
           }, myChangedIds.size > 0 ? `Mine (${myChangedIds.size})` : 'Mine')
         ),
-        React.createElement("button", { style: { ...S.actionBtn, fontSize: '9px' }, onClick: expandAll }, "expand all"),
-        React.createElement("button", { style: { ...S.actionBtn, fontSize: '9px' }, onClick: collapseAll }, "collapse all"),
+        React.createElement("button", {
+          style: { ...S.actionBtn, fontSize: '9px', color: activeSecondaryCount > 0 || prefs.genres.length > 0 || prefs.regions.length > 0 || searchQuery ? 'var(--accent)' : 'var(--text3)' },
+          onClick: () => {
+            savePrefs({ ...PREFS_DEFAULTS });
+            setSearchQuery('');
+            setMyChangesView(false);
+          }
+        }, "clear filters"),
         // More filters button with badge
         React.createElement("button", {
           style: { ...S.filterChip(showMoreFilters || activeSecondaryCount > 0), marginLeft: 'auto' },
@@ -2389,7 +2422,6 @@ function App() {
         const isToday = day === today;
         const timeBuckets = grouped[day];
         const count = Object.values(timeBuckets).flat().length;
-        const isExpanded = expandedDays.has(day);
 
         return React.createElement("div", {
           key: day,
@@ -2398,15 +2430,13 @@ function App() {
         },
           // Day header
           React.createElement("div", {
-            style: { ...S.dayHeader, color: isToday ? 'var(--accent)' : 'var(--text3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none' },
-            onClick: () => toggleDay(day)
+            style: { ...S.dayHeader, color: isToday ? 'var(--accent)' : 'var(--text3)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none' },
           },
             React.createElement("span", null,
               isToday ? '▶ TODAY — ' : '', dateLabel(day),
               React.createElement("span", { style: { fontWeight: 300, marginLeft: '6px', color: 'var(--text3)' } }, count, " shows")
             ),
             React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '10px' }, onClick: e => e.stopPropagation() },
-              // Jump links
               React.createElement("span", {
                 style: S.jumpLink,
                 onClick: (e) => { e.stopPropagation(); jumpTo(nextDayKey(day, dayKeys)); }
@@ -2418,13 +2448,12 @@ function App() {
               React.createElement("span", {
                 style: S.jumpLink,
                 onClick: (e) => { e.stopPropagation(); jumpTo(nextMonthKey(day, dayKeys)); }
-              }, "next month ↓"),
-              React.createElement("span", { style: { fontSize: '10px', color: 'var(--text3)' } }, isExpanded ? '▾' : '▸')
+              }, "next month ↓")
             )
           ),
 
-          // Events (expanded)
-          isExpanded && TB_ORDER.filter(tb => timeBuckets[tb] && timeBuckets[tb].length > 0).map(tb =>
+          // Events — always visible
+          TB_ORDER.filter(tb => timeBuckets[tb] && timeBuckets[tb].length > 0).map(tb =>
             React.createElement("div", { key: tb },
               React.createElement("div", { style: S.timeDivider }, timeBucketLabel[tb]),
               timeBuckets[tb].map((event, i) =>
