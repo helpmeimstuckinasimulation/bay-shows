@@ -656,7 +656,7 @@ const S = {
   modalTitle: { fontSize: '13px', fontWeight: 700, marginBottom: '0', letterSpacing: '0.06em' },
   inputGroup: { marginBottom: '12px' },
   label: { fontSize: '10px', color: 'var(--text3)', letterSpacing: '0.08em', display: 'block', marginBottom: '4px' },
-  input: { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '12px', padding: '7px 10px', outline: 'none', fontFamily: 'var(--mono)' },
+  input: { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '16px', padding: '7px 10px', outline: 'none', fontFamily: 'var(--mono)' },
   btnPrimary: { background: 'var(--accent)', color: 'var(--bg)', fontSize: '12px', fontWeight: 700, padding: '8px 16px', borderRadius: 'var(--radius)', letterSpacing: '0.06em', width: '100%', marginTop: '4px' },
   btnSecondary: { background: 'transparent', color: 'var(--text2)', fontSize: '12px', padding: '8px 16px', borderRadius: 'var(--radius)', border: '1px solid var(--border)', letterSpacing: '0.06em', width: '100%', marginTop: '4px' },
   sectionToggle: { display: 'flex', gap: '0', borderRadius: 'var(--radius)', border: '1px solid var(--border)', overflow: 'hidden', flexShrink: 0 },
@@ -1393,7 +1393,7 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
           type: 'date',
           value: (local.dateRange && local.dateRange.from) || todayStr(),
           min: todayStr(),
-          style: { background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '12px', padding: '6px 8px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%' },
+          style: { background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '16px', padding: '6px 8px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%' },
           onChange: e => setLocal(p => ({ ...p, dateRange: { ...(p.dateRange || {}), from: e.target.value } }))
         })
       ),
@@ -1403,7 +1403,7 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
           type: 'date',
           value: (local.dateRange && local.dateRange.to) || '',
           min: (local.dateRange && local.dateRange.from) || todayStr(),
-          style: { background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '12px', padding: '6px 8px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%' },
+          style: { background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '16px', padding: '6px 8px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%' },
           onChange: e => setLocal(p => ({ ...p, dateRange: { ...(p.dateRange || {}), to: e.target.value } }))
         })
       )
@@ -1447,7 +1447,7 @@ function MoreFiltersPanel({ prefs, savePrefs, onClose }) {
       type: 'date',
       value: (local.recencyWindow && local.recencyWindow.since) || todayStr(),
       max: todayStr(),
-      style: { display: 'block', marginBottom: '8px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '13px', padding: '6px 10px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%', boxSizing: 'border-box' },
+      style: { display: 'block', marginBottom: '8px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: '16px', padding: '6px 10px', fontFamily: 'var(--mono)', colorScheme: 'dark', outline: 'none', width: '100%', boxSizing: 'border-box' },
       onChange: e => setLocal(p => ({ ...p, recencyWindow: { since: e.target.value } }))
     }),
     local.recencyWindow && React.createElement("button", {
@@ -2096,14 +2096,19 @@ function App() {
   // IDs of all locally-modified events — derived from allEvents (the already-merged
   // result) so it stays in sync without any separate localStorage read or dep juggling.
   const myChangedIds = useMemo(() => {
+    const email = driveUser && driveUser.email;
     const ids = new Set();
     allEvents.forEach(e => {
-      if (e._localAdd) ids.add(e.id);               // local add (manual or community), not yet rebuilt into server feed
-      if (e._edited || e._editPending) ids.add(e.id); // locally edited
-      if (e._cancelPending) ids.add(e.id);           // locally cancelled (pending rebuild)
+      // Server-confirmed submissions by this signed-in user
+      if (email && e.community && e.submittedBy === email) ids.add(e.id);
+      // Local adds not yet rebuilt into server feed
+      if (e._localAdd) ids.add(e.id);
+      // Locally edited or cancelled
+      if (e._edited || e._editPending) ids.add(e.id);
+      if (e._cancelPending) ids.add(e.id);
     });
     return ids;
-  }, [allEvents]);
+  }, [allEvents, driveUser]);
 
   // Filtered events (respects all prefs + search)
   const filtered = useMemo(() => {
@@ -2213,7 +2218,7 @@ function App() {
       if (a.d !== b.d) return a.d < b.d ? -1 : 1;
       return midpointMins(a) - midpointMins(b);
     });
-  }, [allEvents, prefs, tags, tickets, hidden, searchQuery, myChangesView, myChangedIds]);
+  }, [allEvents, prefs, tags, tickets, hidden, searchQuery, myChangesView, myChangedIds, driveUser]);
 
   // Group by day → time bucket
   const grouped = useMemo(() => {
