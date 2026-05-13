@@ -87,7 +87,6 @@ const COMMUNITY_ENDPOINT = WEB_APP_URL;  // same Web App handles both GET and PO
 const GDRIVE_AUTH_KEY = 'bay-gdrive-token-v1';
 const GOOG_PREFS_FILE = 'bay_shows_prefs.json';
 const GOOG_TAGS_FILE  = 'bay_shows_tags.json';
-const GOOG_MY_IDS_FILE = 'bay_shows_my_ids.json';
 const GDRIVE_FILEID_KEY = 'bay-gdrive-fileid-v1';
 
 const _driveFileIds = (() => {
@@ -306,36 +305,6 @@ function loadOverrides() {
 }
 
 function saveOverrides(ov) { lsSet(OVERRIDES_KEY, ov); }
-
-const MY_IDS_KEY          = 'bay-my-ids-v1';
-const MY_IDS_MIGRATED_KEY = 'bay-my-ids-migrated-v1';
-
-function loadMyIds() {
-  try { return new Set(JSON.parse(localStorage.getItem(MY_IDS_KEY) || '[]')); } catch { return new Set(); }
-}
-function saveMyIds(ids) {
-  try { localStorage.setItem(MY_IDS_KEY, JSON.stringify([...ids])); } catch {}
-}
-function addMyId(id) {
-  const ids = loadMyIds(); ids.add(id); saveMyIds(ids);
-}
-// One-time migration: seed from ov.adds + cache scan for prefixed IDs.
-function migrateMyIds() {
-  try {
-    if (localStorage.getItem(MY_IDS_MIGRATED_KEY)) return;
-    const ids = loadMyIds();
-    const ov = loadOverrides();
-    (ov.adds || []).forEach(e => { if (e.id) ids.add(e.id); });
-    const cached = JSON.parse(localStorage.getItem('bay-events-cache-v1') || '{}');
-    (cached.events || []).forEach(e => {
-      if (e.id && (e.id.startsWith('uc-add-') || e.id.startsWith('community-') || e.id.startsWith('manual-')))
-        ids.add(e.id);
-    });
-    saveMyIds(ids);
-    localStorage.setItem(MY_IDS_MIGRATED_KEY, '1');
-  } catch {}
-}
-migrateMyIds();
 
 // A local submission is "pending" if built_at predates the submission.
 // builtAt is the ISO string from _meta.built_at; submittedAt is epoch ms.
@@ -1615,7 +1584,6 @@ function AddModal({ onSave, onClose, driveUser, venueList }) {
                            submittedBy: driveUser.email, da: Date.now(), dm: Date.now(),
                            submittedAt: Date.now() };
         // Store in overrides.adds
-        addMyId(id);
         const ov = loadOverrides();
         ov.adds = [newEvent, ...ov.adds];
         saveOverrides(ov);
@@ -1628,7 +1596,6 @@ function AddModal({ onSave, onClose, driveUser, venueList }) {
         setSubmitMsg(msg);
         setTimeout(() => {
           const id = `manual-${Date.now()}`;
-          addMyId(id);
           onSave({ ...payload, id, so: 'manual', da: Date.now(), dm: Date.now() });
           onClose();
         }, 1800);
@@ -1640,7 +1607,6 @@ function AddModal({ onSave, onClose, driveUser, venueList }) {
 
     // Not signed in — local only
     const id = `manual-${Date.now()}`;
-    addMyId(id);
     onSave({ ...payload, id, so: 'manual', da: Date.now(), dm: Date.now() });
     onClose();
   };
@@ -1821,6 +1787,7 @@ function App() {
   const [showInstall, setShowInstall] = useState(true);
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [swUpdate, setSwUpdate] = useState(false); // true when a new SW is waiting
   const [driveUser, setDriveUser] = useState(null);
   const [driveSyncing, setDriveSyncing] = useState(false);
   const [driveSyncMsg, setDriveSyncMsg] = useState('');
@@ -1919,14 +1886,6 @@ function App() {
       try { await driveWrite(tok, GOOG_TAGS_FILE, tagObj); } catch {}
     }, 600);
   }
-  const _debouncedMyIdsWrite = useRef(null);
-  if (!_debouncedMyIdsWrite.current) {
-    _debouncedMyIdsWrite.current = debounce(async () => {
-      const tok = await getOrRefreshToken();
-      if (!tok) return;
-      try { await driveWrite(tok, GOOG_MY_IDS_FILE, [...loadMyIds()]); } catch {}
-    }, 1200);
-  }
 
   const runDriveSync = useCallback(async (token) => {
     setDriveSyncing(true);
@@ -1953,13 +1912,6 @@ function App() {
         await driveWrite(token, GOOG_TAGS_FILE, localTags);
         setDriveSyncMsg(`Signed in · ${Object.keys(localTags).length} shows backed up`);
       }
-      // Sync my-ids: merge local + remote, write back merged set to both
-      const localMyIds = loadMyIds();
-      const driveMyIds = await driveRead(token, GOOG_MY_IDS_FILE);
-      const mergedMyIds = new Set([...localMyIds, ...(driveMyIds || [])]);
-      saveMyIds(mergedMyIds);
-      setOverridesTick(t => t + 1); // re-render Mine count with synced ids
-      await driveWrite(token, GOOG_MY_IDS_FILE, [...mergedMyIds]);
     } catch (e) { setDriveSyncMsg('Sync error: ' + e.message); }
     finally { setDriveSyncing(false); setTimeout(() => setDriveSyncMsg(''), 6000); }
   }, [prefs]);
@@ -2016,7 +1968,6 @@ function App() {
     // before calling onSave, so rebuilding from m (stale React state) would drop events.
     setManual(m); lsSet(MANUAL_KEY, m);
     setOverridesTick(t => t + 1);
-    _debouncedMyIdsWrite.current();
   };
 
   const load = useCallback(async (force = false) => {
@@ -2047,7 +1998,26 @@ function App() {
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/bay-shows/sw.js').catch(console.warn);
+      navigator.serviceWorker.register('/bay-shows/sw.js')
+        .then(reg => {
+          // Store registration for update button
+          window._swReg = reg;
+          // If a new SW is waiting on arrival, surface the update banner immediately
+          if (reg.waiting) setSwUpdate(true);
+          reg.addEventListener('updatefound', () => {
+            const newSW = reg.installing;
+            newSW.addEventListener('statechange', () => {
+              if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+                setSwUpdate(true);
+              }
+            });
+          });
+        })
+        .catch(console.warn);
+      // When the new SW takes over, reload to get fresh assets
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        window.location.reload();
+      });
     }
   }, []);
 
@@ -2109,7 +2079,15 @@ function App() {
   // IDs of all locally-modified events (adds + edits + cancels)
   // IDs of all locally-modified events — derived from allEvents (the already-merged
   // result) so it stays in sync without any separate localStorage read or dep juggling.
-  const myChangedIds = useMemo(() => loadMyIds(), [overridesTick]);
+  const myChangedIds = useMemo(() => {
+    const ids = new Set();
+    allEvents.forEach(e => {
+      if (e._localAdd) ids.add(e.id);               // local add (manual or community), not yet rebuilt into server feed
+      if (e._edited || e._editPending) ids.add(e.id); // locally edited
+      if (e._cancelPending) ids.add(e.id);           // locally cancelled (pending rebuild)
+    });
+    return ids;
+  }, [allEvents]);
 
   // Filtered events (respects all prefs + search)
   const filtered = useMemo(() => {
@@ -2254,7 +2232,6 @@ function App() {
   // Both write to overrides immediately for optimistic local rendering,
   // and fire a no-cors POST to the Apps Script if the user is signed in.
   const submitEdit = useCallback(async (event_id, fields) => {
-    addMyId(event_id);
     const now = Date.now();
     const ov = loadOverrides();
     // Upsert: replace existing edit for this event_id if present
@@ -2263,7 +2240,6 @@ function App() {
     if (idx >= 0) ov.edits[idx] = entry; else ov.edits.push(entry);
     saveOverrides(ov);
     setOverridesTick(t => t + 1);
-    _debouncedMyIdsWrite.current();
 
     if (driveUser && COMMUNITY_ENDPOINT) {
       try {
@@ -2274,14 +2250,12 @@ function App() {
   }, [driveUser]);
 
   const submitCancel = useCallback(async (event_id) => {
-    addMyId(event_id);
     const now = Date.now();
     const ov = loadOverrides();
     if (!ov.cancels.find(c => c.event_id === event_id)) {
       ov.cancels.push({ event_id, submittedAt: now });
       saveOverrides(ov);
       setOverridesTick(t => t + 1);
-      _debouncedMyIdsWrite.current();
     }
 
     if (driveUser && COMMUNITY_ENDPOINT) {
@@ -2291,6 +2265,25 @@ function App() {
       } catch {}
     }
   }, [driveUser]);
+
+  const doSwUpdate = useCallback(() => {
+    const reg = window._swReg;
+    if (!reg) { window.location.reload(); return; }
+    // If a SW is already waiting, skip it directly
+    if (reg.waiting) {
+      reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      return; // controllerchange listener will reload
+    }
+    // Otherwise trigger a fresh check
+    reg.update().then(() => {
+      if (reg.waiting) {
+        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      } else {
+        // No new SW found — caches are current, just hard-reload
+        window.location.reload(true);
+      }
+    }).catch(() => window.location.reload(true));
+  }, []);
 
   const toggleGenre = g => {
     const genres = prefs.genres || [];
@@ -2314,6 +2307,17 @@ function App() {
     React.createElement("style", null, ANIM_STYLE),
     React.createElement("div", { style: S.appInner },
 
+    // ── Update banner ──
+    swUpdate && React.createElement("div", {
+      style: { background: 'var(--accent)', color: 'var(--bg)', fontSize: '11px',
+               fontWeight: 700, padding: '8px 16px', display: 'flex',
+               alignItems: 'center', justifyContent: 'space-between',
+               flexShrink: 0, letterSpacing: '0.04em', cursor: 'pointer' },
+      onClick: doSwUpdate
+    },
+      React.createElement("span", null, "↑ Update available — tap to reload"),
+      React.createElement("span", { style: { fontSize: '13px' } }, "↻")
+    ),
     // ── Header ──
     React.createElement("div", { style: S.header },
       React.createElement("div", { style: S.headerRow },
@@ -2532,6 +2536,14 @@ function App() {
       error && React.createElement("span", { style: { color: 'var(--red)' } }, "⚠ ", error),
       driveUser && !driveSyncMsg && React.createElement("span", { style: { color: 'var(--text3)', fontSize: '10px' } }, driveUser.email.split('@')[0]),
       driveSyncMsg && React.createElement("span", { style: { color: 'var(--accent)', fontSize: '10px' } }, driveSyncMsg),
+      React.createElement("button", {
+        title: "Check for app update",
+        style: { fontSize: '10px', color: 'var(--text3)', border: '1px solid var(--border2)',
+                 borderRadius: 'var(--radius)', padding: '1px 6px', letterSpacing: '0.04em',
+                 background: swUpdate ? 'var(--accent)22' : 'transparent',
+                 color: swUpdate ? 'var(--accent)' : 'var(--text3)' },
+        onClick: doSwUpdate
+      }, swUpdate ? '↑ update' : '↻ reload'),
       React.createElement("span", { style: { marginLeft: 'auto', color: 'var(--text3)' } }, Object.keys(tags).length, " saved",
         Object.keys(tickets).length > 0 ? ` · ${Object.keys(tickets).length} 🎫` : ''
       )
