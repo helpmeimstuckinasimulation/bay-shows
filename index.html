@@ -74,6 +74,7 @@ const HIDDEN_KEY   = 'bay-hidden-v1';   // { [eventId]: epochMs }
 const TICKETS_KEY  = 'bay-tickets-v1';  // { [eventId]: epochMs }
 const DJ_OVERRIDE_KEY = 'bay-dj-override-v1'; // { [eventId]: 'live'|'dj' }
 const OVERRIDES_KEY   = 'bay-overrides-v1';  // { adds:[...], edits:[...], cancels:[...] }
+const MY_IDS_KEY      = 'bay-my-ids-v1';      // Set of event IDs ever submitted/edited by this user
 const TTL_MS       = 6 * 60 * 60 * 1000;
 
 const GOOG_CLIENT_ID  = '1030489561991-kbu11qmn3o58ahu69d27f3g09qhai1ns.apps.googleusercontent.com';
@@ -305,6 +306,46 @@ function loadOverrides() {
 }
 
 function saveOverrides(ov) { lsSet(OVERRIDES_KEY, ov); }
+
+// Persistent set of all IDs this user has ever added, edited, or cancelled.
+// Survives rebuilds — once an id is in here it stays until explicitly cleared.
+function loadMyIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(MY_IDS_KEY) || '[]')); } catch { return new Set(); }
+}
+function addMyId(id) {
+  const ids = loadMyIds();
+  ids.add(id);
+  try { localStorage.setItem(MY_IDS_KEY, JSON.stringify([...ids])); } catch {}
+}
+
+// One-time migration: seed MY_IDS_KEY from (a) any ids already in ov.adds and
+// (b) any server-feed event ids that start with "uc-add-" or "community-" or "manual-",
+// which indicate events this user submitted in a prior session before MY_IDS_KEY existed.
+// Runs once: skipped if MY_IDS_KEY already has entries.
+function migrateMyIds() {
+  try {
+    const existing = loadMyIds();
+    if (existing.size > 0) return; // already seeded, skip
+    const ids = new Set();
+    // Scan ov.adds in OVERRIDES_KEY
+    const ov = loadOverrides();
+    (ov.adds || []).forEach(e => { if (e.id) ids.add(e.id); });
+    // Scan server cache for community/manual/uc-add prefixed IDs
+    const cached = JSON.parse(localStorage.getItem('bay-events-cache-v1') || '{}');
+    const evts = cached.events || [];
+    evts.forEach(e => {
+      if (e.id && (
+        e.id.startsWith('uc-add-') ||
+        e.id.startsWith('community-') ||
+        e.id.startsWith('manual-')
+      )) ids.add(e.id);
+    });
+    if (ids.size > 0) {
+      localStorage.setItem(MY_IDS_KEY, JSON.stringify([...ids]));
+    }
+  } catch {}
+}
+migrateMyIds();
 
 // A local submission is "pending" if built_at predates the submission.
 // builtAt is the ISO string from _meta.built_at; submittedAt is epoch ms.
@@ -1583,7 +1624,8 @@ function AddModal({ onSave, onClose, driveUser, venueList }) {
         const newEvent = { ...payload, id, so: 'community', s: 'community', community: true,
                            submittedBy: driveUser.email, da: Date.now(), dm: Date.now(),
                            submittedAt: Date.now() };
-        // Store in overrides.adds
+        // Store in overrides.adds and record id permanently
+        addMyId(id);
         const ov = loadOverrides();
         ov.adds = [newEvent, ...ov.adds];
         saveOverrides(ov);
@@ -1596,6 +1638,7 @@ function AddModal({ onSave, onClose, driveUser, venueList }) {
         setSubmitMsg(msg);
         setTimeout(() => {
           const id = `manual-${Date.now()}`;
+          addMyId(id);
           onSave({ ...payload, id, so: 'manual', da: Date.now(), dm: Date.now() });
           onClose();
         }, 1800);
@@ -1607,6 +1650,7 @@ function AddModal({ onSave, onClose, driveUser, venueList }) {
 
     // Not signed in — local only
     const id = `manual-${Date.now()}`;
+    addMyId(id);
     onSave({ ...payload, id, so: 'manual', da: Date.now(), dm: Date.now() });
     onClose();
   };
@@ -2059,15 +2103,9 @@ function App() {
   // IDs of all locally-modified events (adds + edits + cancels)
   // IDs of all locally-modified events — derived from allEvents (the already-merged
   // result) so it stays in sync without any separate localStorage read or dep juggling.
-  const myChangedIds = useMemo(() => {
-    const ids = new Set();
-    allEvents.forEach(e => {
-      if (e._localAdd) ids.add(e.id);               // local add (manual or community), not yet rebuilt into server feed
-      if (e._edited || e._editPending) ids.add(e.id); // locally edited
-      if (e._cancelPending) ids.add(e.id);           // locally cancelled (pending rebuild)
-    });
-    return ids;
-  }, [allEvents]);
+  // MY_IDS_KEY is the authoritative source — it persists across rebuilds.
+  // We read it fresh here (no React dep needed; it's append-only and never cleared by app logic).
+  const myChangedIds = useMemo(() => loadMyIds(), [overridesTick]);
 
   // Filtered events (respects all prefs + search)
   const filtered = useMemo(() => {
@@ -2212,6 +2250,7 @@ function App() {
   // Both write to overrides immediately for optimistic local rendering,
   // and fire a no-cors POST to the Apps Script if the user is signed in.
   const submitEdit = useCallback(async (event_id, fields) => {
+    addMyId(event_id);
     const now = Date.now();
     const ov = loadOverrides();
     // Upsert: replace existing edit for this event_id if present
@@ -2230,6 +2269,7 @@ function App() {
   }, [driveUser]);
 
   const submitCancel = useCallback(async (event_id) => {
+    addMyId(event_id);
     const now = Date.now();
     const ov = loadOverrides();
     if (!ov.cancels.find(c => c.event_id === event_id)) {
@@ -2279,7 +2319,7 @@ function App() {
               const total = cacheInfo.meta ? cacheInfo.meta.event_count : null;
               const builtAt = cacheInfo.meta && cacheInfo.meta.built_at
                 ? new Date(cacheInfo.meta.built_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : null;
-              return `${filtered.length}${total ? '/'+total : ''} shows · ${cacheInfo.fromCache ? 'cached' : 'live'}${cacheInfo.stale ? ' (stale)' : ''}${builtAt ? ' · updated '+builtAt : ''}`;
+              return `${filtered.length}${total ? '/'+total : ''} shows${builtAt ? ' · ' + builtAt : ''}${cacheInfo.stale ? ' (stale)' : ''}`;
             })() : `${filtered.length} shows`
           )
         ),
@@ -2479,10 +2519,7 @@ function App() {
 
     // ── Status bar ──
     React.createElement("div", { style: S.statusBar },
-      cacheInfo && React.createElement(React.Fragment, null,
-        React.createElement("span", null, cacheInfo.fromCache ? '◌ cached' : '● live'),
-        cacheInfo.ts && React.createElement("span", { style: { color: 'var(--text3)' } }, '· ', new Date(cacheInfo.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
-      ),
+
       error && React.createElement("span", { style: { color: 'var(--red)' } }, "⚠ ", error),
       driveUser && !driveSyncMsg && React.createElement("span", { style: { color: 'var(--text3)', fontSize: '10px' } }, driveUser.email.split('@')[0]),
       driveSyncMsg && React.createElement("span", { style: { color: 'var(--accent)', fontSize: '10px' } }, driveSyncMsg),
