@@ -2014,9 +2014,11 @@ function App() {
           });
         })
         .catch(console.warn);
-      // When the new SW takes over, reload to get fresh assets
+      // When the new SW takes over after an explicit update request, reload.
+      // Guard with a flag so normal SW activation (first install, etc.)
+      // doesn't reload the page mid-auth-flow.
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        window.location.reload();
+        if (window._swUpdatePending) window.location.reload();
       });
     }
   }, []);
@@ -2080,19 +2082,14 @@ function App() {
   // IDs of all locally-modified events — derived from allEvents (the already-merged
   // result) so it stays in sync without any separate localStorage read or dep juggling.
   const myChangedIds = useMemo(() => {
-    const email = driveUser && driveUser.email;
     const ids = new Set();
     allEvents.forEach(e => {
-      // Server-confirmed submissions by this signed-in user
-      if (email && e.community && e.submittedBy === email) ids.add(e.id);
-      // Local adds not yet rebuilt into server feed
-      if (e._localAdd) ids.add(e.id);
-      // Locally edited or cancelled
-      if (e._edited || e._editPending) ids.add(e.id);
-      if (e._cancelPending) ids.add(e.id);
+      if (e._localAdd) ids.add(e.id);               // local add (manual or community), not yet rebuilt into server feed
+      if (e._edited || e._editPending) ids.add(e.id); // locally edited
+      if (e._cancelPending) ids.add(e.id);           // locally cancelled (pending rebuild)
     });
     return ids;
-  }, [allEvents, driveUser]); // driveUser in deps: recomputes when sign-in resolves
+  }, [allEvents]);
 
   // Filtered events (respects all prefs + search)
   const filtered = useMemo(() => {
@@ -2202,7 +2199,7 @@ function App() {
       if (a.d !== b.d) return a.d < b.d ? -1 : 1;
       return midpointMins(a) - midpointMins(b);
     });
-  }, [allEvents, prefs, tags, tickets, hidden, searchQuery, myChangesView, myChangedIds, driveUser]);
+  }, [allEvents, prefs, tags, tickets, hidden, searchQuery, myChangesView, myChangedIds]);
 
   // Group by day → time bucket
   const grouped = useMemo(() => {
@@ -2274,17 +2271,15 @@ function App() {
   const doSwUpdate = useCallback(() => {
     const reg = window._swReg;
     if (!reg) { window.location.reload(); return; }
-    // If a SW is already waiting, skip it directly
+    window._swUpdatePending = true; // allow controllerchange to reload
     if (reg.waiting) {
       reg.waiting.postMessage({ type: 'SKIP_WAITING' });
       return; // controllerchange listener will reload
     }
-    // Otherwise trigger a fresh check
     reg.update().then(() => {
       if (reg.waiting) {
         reg.waiting.postMessage({ type: 'SKIP_WAITING' });
       } else {
-        // No new SW found — caches are current, just hard-reload
         window.location.reload(true);
       }
     }).catch(() => window.location.reload(true));
