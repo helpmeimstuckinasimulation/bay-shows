@@ -2056,13 +2056,26 @@ function App() {
     });
 
     // Local adds (migrated from manual + any new community adds)
-    const localAdds = ov.adds.map(e => ({
-      ...e,
-      _manual: !e.community,
-      _localAdd: true,        // marks ANY local add (manual or community) — never on server events
-      _cancelPending: false,
-      _editPending:   false,
-    }));
+    // Also apply any local edits — editMap covers both server events and local adds.
+    const localAdds = ov.adds.map(e => {
+      let out = {
+        ...e,
+        _manual: !e.community,
+        _localAdd: true,
+        _cancelPending: cancelSet.has(e.id),
+        _cancelled:     cancelSet.has(e.id),
+        _editPending:   false,
+      };
+      if (editMap[e.id]) {
+        const ed = editMap[e.id];
+        const nonEmpty = Object.fromEntries(
+          Object.entries(ed.fields || {}).filter(([, v]) => v !== '' && v !== null && v !== undefined)
+        );
+        out = { ...out, ...nonEmpty, _edited: true,
+                _editPending: isPending(ed.submittedAt, builtAt) };
+      }
+      return out;
+    }).filter(e => !cancelSet.has(e.id) || e._cancelled);
 
     return [...localAdds, ...serverMerged].map(e => ({
       ...e,
