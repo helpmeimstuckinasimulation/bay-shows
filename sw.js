@@ -1,6 +1,6 @@
 // Bay Shows PWA - Service Worker
 // Cache version — bump this to force full cache refresh
-const CACHE_VERSION = 'bay-shows-v6';
+const CACHE_VERSION = 'bay-shows-v7';
 const DATA_CACHE = 'bay-shows-data-v1';
 
 // Base path matches GitHub Pages deployment at /bay-shows/
