@@ -1755,6 +1755,7 @@ function App() {
   const [hidden, setHidden] = useState(() => lsGet(HIDDEN_KEY, {}));
   const [djOverrides, setDjOverrides] = useState(() => lsGet(DJ_OVERRIDE_KEY, {}));
   const [manual, setManual] = useState(() => lsGet(MANUAL_KEY, []));
+  const [overridesTick, setOverridesTick] = useState(0); // incremented whenever overrides change; triggers allEvents recompute
   const PREFS_DEFAULTS = {
     regions: [],
     genres: [],
@@ -1961,11 +1962,11 @@ function App() {
   const saveTags = t => { setTags(t); lsSet(TAGS_KEY, t); _debouncedTagWrite.current(t); };
   const savePrefs = p => { setPrefs(p); lsSet(PREFS_KEY, p); syncPrefsToDrive(p); };
   const saveManual = m => {
-    // m is the new manual array (prepend style); sync the first element into overrides.adds
+    // m is the new manual array (prepend style); write to MANUAL_KEY for legacy compat.
+    // Do NOT rebuild ov.adds here — AddModal already writes directly to overrides.adds
+    // before calling onSave, so rebuilding from m (stale React state) would drop events.
     setManual(m); lsSet(MANUAL_KEY, m);
-    const ov = loadOverrides();
-    ov.adds = m.map(e => ({ ...e, submittedAt: e.da || Date.now() }));
-    saveOverrides(ov);
+    setOverridesTick(t => t + 1);
   };
 
   const load = useCallback(async (force = false) => {
@@ -2047,7 +2048,7 @@ function App() {
       ...e,
       _isDJ: classifyDJ(e, djOverrides)
     }));
-  }, [events, manual, djOverrides, cacheInfo]);
+  }, [events, overridesTick, djOverrides, cacheInfo]);
 
   // Sorted unique venue list for AddModal dropdown
   const venueList = useMemo(() =>
@@ -2218,8 +2219,7 @@ function App() {
     const entry = { event_id, fields, submittedAt: now };
     if (idx >= 0) ov.edits[idx] = entry; else ov.edits.push(entry);
     saveOverrides(ov);
-    // Force re-render by bumping manual (cheap trigger)
-    setManual(m => [...m]);
+    setOverridesTick(t => t + 1);
 
     if (driveUser && COMMUNITY_ENDPOINT) {
       try {
@@ -2235,7 +2235,7 @@ function App() {
     if (!ov.cancels.find(c => c.event_id === event_id)) {
       ov.cancels.push({ event_id, submittedAt: now });
       saveOverrides(ov);
-      setManual(m => [...m]);
+      setOverridesTick(t => t + 1);
     }
 
     if (driveUser && COMMUNITY_ENDPOINT) {
