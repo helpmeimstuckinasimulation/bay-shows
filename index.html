@@ -2056,26 +2056,13 @@ function App() {
     });
 
     // Local adds (migrated from manual + any new community adds)
-    // Also apply any local edits — editMap covers both server events and local adds.
-    const localAdds = ov.adds.map(e => {
-      let out = {
-        ...e,
-        _manual: !e.community,
-        _localAdd: true,
-        _cancelPending: cancelSet.has(e.id),
-        _cancelled:     cancelSet.has(e.id),
-        _editPending:   false,
-      };
-      if (editMap[e.id]) {
-        const ed = editMap[e.id];
-        const nonEmpty = Object.fromEntries(
-          Object.entries(ed.fields || {}).filter(([, v]) => v !== '' && v !== null && v !== undefined)
-        );
-        out = { ...out, ...nonEmpty, _edited: true,
-                _editPending: isPending(ed.submittedAt, builtAt) };
-      }
-      return out;
-    }).filter(e => !cancelSet.has(e.id) || e._cancelled);
+    const localAdds = ov.adds.map(e => ({
+      ...e,
+      _manual: !e.community,
+      _localAdd: true,        // marks ANY local add (manual or community) — never on server events
+      _cancelPending: false,
+      _editPending:   false,
+    }));
 
     return [...localAdds, ...serverMerged].map(e => ({
       ...e,
@@ -2093,14 +2080,19 @@ function App() {
   // IDs of all locally-modified events — derived from allEvents (the already-merged
   // result) so it stays in sync without any separate localStorage read or dep juggling.
   const myChangedIds = useMemo(() => {
+    const email = driveUser && driveUser.email;
     const ids = new Set();
     allEvents.forEach(e => {
-      if (e._localAdd) ids.add(e.id);               // local add (manual or community), not yet rebuilt into server feed
-      if (e._edited || e._editPending) ids.add(e.id); // locally edited
-      if (e._cancelPending) ids.add(e.id);           // locally cancelled (pending rebuild)
+      // Server-confirmed submissions by this signed-in user
+      if (email && e.community && e.submittedBy === email) ids.add(e.id);
+      // Local adds not yet rebuilt into server feed
+      if (e._localAdd) ids.add(e.id);
+      // Locally edited or cancelled
+      if (e._edited || e._editPending) ids.add(e.id);
+      if (e._cancelPending) ids.add(e.id);
     });
     return ids;
-  }, [allEvents]);
+  }, [allEvents, driveUser]); // driveUser in deps: recomputes when sign-in resolves
 
   // Filtered events (respects all prefs + search)
   const filtered = useMemo(() => {
@@ -2210,7 +2202,7 @@ function App() {
       if (a.d !== b.d) return a.d < b.d ? -1 : 1;
       return midpointMins(a) - midpointMins(b);
     });
-  }, [allEvents, prefs, tags, tickets, hidden, searchQuery, myChangesView, myChangedIds]);
+  }, [allEvents, prefs, tags, tickets, hidden, searchQuery, myChangesView, myChangedIds, driveUser]);
 
   // Group by day → time bucket
   const grouped = useMemo(() => {
