@@ -306,6 +306,58 @@ function loadOverrides() {
 
 function saveOverrides(ov) { lsSet(OVERRIDES_KEY, ov); }
 
+// When a manually-added event is superseded by a server event (same date + venue,
+// different ID), migrate tags/tickets/hidden from the old ID to the new one and
+// remove the old local add so it doesn't show as a duplicate.
+// Called once each time fresh events are loaded.
+function migrateSupersededLocalAdds(fetchedEvents, tagsObj, ticketsObj, hiddenObj) {
+  const ov = loadOverrides();
+  if (!ov.adds || ov.adds.length === 0) return null; // nothing to migrate
+
+  // Build lookup: "YYYY-MM-DD|venueslug" → server event id
+  const normalize = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const serverIndex = {};
+  fetchedEvents.forEach(e => {
+    if (!e.d || !e.v) return;
+    const key = `${e.d}|${normalize(e.v)}`;
+    serverIndex[key] = e.id;
+  });
+
+  let tagsChanged = false, ticketsChanged = false, hiddenChanged = false;
+  const newTags    = { ...tagsObj };
+  const newTickets = { ...ticketsObj };
+  const newHidden  = { ...hiddenObj };
+  const survivingAdds = [];
+
+  ov.adds.forEach(localEvent => {
+    if (!localEvent.d || !localEvent.v) { survivingAdds.push(localEvent); return; }
+    const key = `${localEvent.d}|${normalize(localEvent.v)}`;
+    const serverId = serverIndex[key];
+    if (!serverId || serverId === localEvent.id) {
+      // No server match, or already same ID — keep as-is
+      survivingAdds.push(localEvent);
+      return;
+    }
+    // Server has taken over this event — migrate associations
+    if (newTags[localEvent.id])    { newTags[serverId]    = newTags[localEvent.id];    delete newTags[localEvent.id];    tagsChanged    = true; }
+    if (newTickets[localEvent.id]) { newTickets[serverId] = newTickets[localEvent.id]; delete newTickets[localEvent.id]; ticketsChanged = true; }
+    if (newHidden[localEvent.id])  { newHidden[serverId]  = newHidden[localEvent.id];  delete newHidden[localEvent.id];  hiddenChanged  = true; }
+    // Don't keep the local add — the server event replaces it
+  });
+
+  // Persist updated overrides if any local adds were removed
+  if (survivingAdds.length !== ov.adds.length) {
+    ov.adds = survivingAdds;
+    saveOverrides(ov);
+  }
+
+  return {
+    tags:    tagsChanged    ? newTags    : null,
+    tickets: ticketsChanged ? newTickets : null,
+    hidden:  hiddenChanged  ? newHidden  : null,
+  };
+}
+
 // A local submission is "pending" if built_at predates the submission.
 // builtAt is the ISO string from _meta.built_at; submittedAt is epoch ms.
 function isPending(submittedAt, builtAt) {
@@ -1990,6 +2042,19 @@ function App() {
           lsSet(SNAP_KEY, newSnap);
         }
         snapRef.current = true;
+      }
+      // Migrate tags/tickets/hidden from superseded local adds to their server replacements
+      const migration = migrateSupersededLocalAdds(
+        fetched,
+        lsGet(TAGS_KEY, {}),
+        lsGet(TICKETS_KEY, {}),
+        lsGet(HIDDEN_KEY, {})
+      );
+      if (migration) {
+        if (migration.tags)    { setTags(migration.tags);       lsSet(TAGS_KEY,    migration.tags); }
+        if (migration.tickets) { setTickets(migration.tickets); lsSet(TICKETS_KEY, migration.tickets); }
+        if (migration.hidden)  { setHidden(migration.hidden);   lsSet(HIDDEN_KEY,  migration.hidden); }
+        setOverridesTick(t => t + 1);
       }
       setEvents(fetched);
       setArtistLinks(fetchedLinks || {});
