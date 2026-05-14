@@ -1160,14 +1160,37 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
           { key: 'soundcloud',  label: 'SoundCloud',  color: '#ff5500' },
           { key: 'instagram',   label: 'Instagram',   color: '#c13584' },
           { key: 'discogs',     label: 'Discogs',     color: '#333366' },
-        ].filter(({ key }) => mbLinks[key]).map(({ key, label, color }) =>
-          React.createElement("a", {
+        ].filter(({ key }) => mbLinks[key]).map(({ key, label, color }) => {
+          // Spotify: try spotify: URI scheme first (opens desktop/mobile app),
+          // fall back to web URL after 1.5 s if the OS didn't hand off.
+          if (key === 'spotify') {
+            const webUrl = mbLinks[key];
+            // Derive spotify: URI from the https://open.spotify.com/… URL.
+            // e.g. https://open.spotify.com/artist/06HL4z0C… → spotify:artist:06HL4z0C…
+            let appUri = webUrl;
+            try {
+              const m = webUrl.match(/open\.spotify\.com\/(artist|album|track|playlist)\/([^?#]+)/);
+              if (m) appUri = `spotify:${m[1]}:${m[2]}`;
+            } catch {}
+            return React.createElement("a", {
+              key,
+              href: webUrl,
+              target: '_blank', rel: 'noopener',
+              style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: `1px solid ${color}44`, color, background: `${color}11`, textDecoration: 'none' },
+              onClick: (e) => {
+                e.preventDefault();
+                window.location.href = appUri;
+                setTimeout(() => window.open(webUrl, '_blank'), 1500);
+              }
+            }, label + ' ↗');
+          }
+          return React.createElement("a", {
             key,
             href: mbLinks[key],
             target: '_blank', rel: 'noopener',
             style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: `1px solid ${color}44`, color, background: `${color}11`, textDecoration: 'none' }
-          }, label + ' ↗')
-        ),
+          }, label + ' ↗');
+        }),
         // Discovery links: always shown as fallbacks
         React.createElement("a", {
           href: mbLinks.musicbrainz || `https://musicbrainz.org/search?query=${encodeURIComponent(artistName)}&type=artist`,
