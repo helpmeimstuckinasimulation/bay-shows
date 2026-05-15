@@ -726,18 +726,23 @@ function CancelledCard({ event }) {
 // Slide-up sheet to edit an existing event. Pre-populated with event fields.
 // Only changed fields are sent to submitEdit.
 function EditModal({ event, onSubmitEdit, onSubmitCancel, onClose }) {
+  const toStr = v => {
+    if (v === null || v === undefined) return '';
+    if (Array.isArray(v)) return v.join(', ');
+    return String(v);
+  };
   const orig = {
-    a:      Array.isArray(event.a) ? event.a.join(', ') : (event.a || ''),
-    v:      event.v  || '',
-    d:      event.d  || '',
-    tDoors: event.t_doors || event.t || '',
-    tShow:  event.t_show  || '',
-    tEnd:   event.te || '',
+    a:      Array.isArray(event.a) ? event.a.join(', ') : toStr(event.a),
+    v:      toStr(event.v),
+    d:      toStr(event.d),
+    tDoors: toStr(event.t_doors || event.t),
+    tShow:  toStr(event.t_show),
+    tEnd:   toStr(event.te),
     g:      resolveGenre(event.g) || 'other',
-    p:      event.p  !== undefined ? String(event.p) : '',
-    age:    event.age || '',
-    lk:     event.lk || '',
-    n:      event.n  || '',
+    p:      event.p !== undefined && event.p !== null ? String(event.p) : '',
+    age:    toStr(event.age),
+    lk:     toStr(event.lk),
+    n:      Array.isArray(event.n) ? event.n.join(' ') : toStr(event.n),
   };
 
   const [form, setForm] = useState({ ...orig });
