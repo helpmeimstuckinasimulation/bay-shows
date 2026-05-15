@@ -1161,12 +1161,8 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
           { key: 'instagram',   label: 'Instagram',   color: '#c13584' },
           { key: 'discogs',     label: 'Discogs',     color: '#333366' },
         ].filter(({ key }) => mbLinks[key]).map(({ key, label, color }) => {
-          // Spotify: try spotify: URI scheme first (opens desktop/mobile app),
-          // fall back to web URL after 1.5 s if the OS didn't hand off.
           if (key === 'spotify') {
             const webUrl = mbLinks[key];
-            // Derive spotify: URI from the https://open.spotify.com/… URL.
-            // e.g. https://open.spotify.com/artist/06HL4z0C… → spotify:artist:06HL4z0C…
             let appUri = webUrl;
             try {
               const m = webUrl.match(/open\.spotify\.com\/(artist|album|track|playlist)\/([^?#]+)/);
@@ -1178,9 +1174,13 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
               target: '_blank', rel: 'noopener',
               style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: `1px solid ${color}44`, color, background: `${color}11`, textDecoration: 'none' },
               onClick: (e) => {
+                if (appUri === webUrl) return; // no spotify: URI derived — let href open normally
                 e.preventDefault();
-                window.location.href = appUri;
-                setTimeout(() => window.open(webUrl, '_blank'), 1500);
+                const iframe = document.createElement('iframe');
+                iframe.style.cssText = 'display:none;width:0;height:0;border:0;position:absolute';
+                document.body.appendChild(iframe);
+                iframe.src = appUri;
+                setTimeout(() => { try { document.body.removeChild(iframe); } catch {} }, 2000);
               }
             }, label + ' ↗');
           }
