@@ -306,58 +306,6 @@ function loadOverrides() {
 
 function saveOverrides(ov) { lsSet(OVERRIDES_KEY, ov); }
 
-// When a manually-added event is superseded by a server event (same date + venue,
-// different ID), migrate tags/tickets/hidden from the old ID to the new one and
-// remove the old local add so it doesn't show as a duplicate.
-// Called once each time fresh events are loaded.
-function migrateSupersededLocalAdds(fetchedEvents, tagsObj, ticketsObj, hiddenObj) {
-  const ov = loadOverrides();
-  if (!ov.adds || ov.adds.length === 0) return null; // nothing to migrate
-
-  // Build lookup: "YYYY-MM-DD|venueslug" → server event id
-  const normalize = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const serverIndex = {};
-  fetchedEvents.forEach(e => {
-    if (!e.d || !e.v) return;
-    const key = `${e.d}|${normalize(e.v)}`;
-    serverIndex[key] = e.id;
-  });
-
-  let tagsChanged = false, ticketsChanged = false, hiddenChanged = false;
-  const newTags    = { ...tagsObj };
-  const newTickets = { ...ticketsObj };
-  const newHidden  = { ...hiddenObj };
-  const survivingAdds = [];
-
-  ov.adds.forEach(localEvent => {
-    if (!localEvent.d || !localEvent.v) { survivingAdds.push(localEvent); return; }
-    const key = `${localEvent.d}|${normalize(localEvent.v)}`;
-    const serverId = serverIndex[key];
-    if (!serverId || serverId === localEvent.id) {
-      // No server match, or already same ID — keep as-is
-      survivingAdds.push(localEvent);
-      return;
-    }
-    // Server has taken over this event — migrate associations
-    if (newTags[localEvent.id])    { newTags[serverId]    = newTags[localEvent.id];    delete newTags[localEvent.id];    tagsChanged    = true; }
-    if (newTickets[localEvent.id]) { newTickets[serverId] = newTickets[localEvent.id]; delete newTickets[localEvent.id]; ticketsChanged = true; }
-    if (newHidden[localEvent.id])  { newHidden[serverId]  = newHidden[localEvent.id];  delete newHidden[localEvent.id];  hiddenChanged  = true; }
-    // Don't keep the local add — the server event replaces it
-  });
-
-  // Persist updated overrides if any local adds were removed
-  if (survivingAdds.length !== ov.adds.length) {
-    ov.adds = survivingAdds;
-    saveOverrides(ov);
-  }
-
-  return {
-    tags:    tagsChanged    ? newTags    : null,
-    tickets: ticketsChanged ? newTickets : null,
-    hidden:  hiddenChanged  ? newHidden  : null,
-  };
-}
-
 // A local submission is "pending" if built_at predates the submission.
 // builtAt is the ISO string from _meta.built_at; submittedAt is epoch ms.
 function isPending(submittedAt, builtAt) {
@@ -778,25 +726,18 @@ function CancelledCard({ event }) {
 // Slide-up sheet to edit an existing event. Pre-populated with event fields.
 // Only changed fields are sent to submitEdit.
 function EditModal({ event, onSubmitEdit, onSubmitCancel, onClose }) {
-  // Normalize all fields to strings so .trim() never throws,
-  // regardless of whether the server sends arrays, nulls, or booleans.
-  const toStr = v => {
-    if (v === null || v === undefined) return '';
-    if (Array.isArray(v)) return v.join(', ');
-    return String(v);
-  };
   const orig = {
-    a:      Array.isArray(event.a) ? event.a.join(', ') : toStr(event.a),
-    v:      toStr(event.v),
-    d:      toStr(event.d),
-    tDoors: toStr(event.t_doors || event.t),
-    tShow:  toStr(event.t_show),
-    tEnd:   toStr(event.te),
+    a:      Array.isArray(event.a) ? event.a.join(', ') : (event.a || ''),
+    v:      event.v  || '',
+    d:      event.d  || '',
+    tDoors: event.t_doors || event.t || '',
+    tShow:  event.t_show  || '',
+    tEnd:   event.te || '',
     g:      resolveGenre(event.g) || 'other',
-    p:      event.p !== undefined && event.p !== null ? String(event.p) : '',
-    age:    toStr(event.age),
-    lk:     toStr(event.lk),
-    n:      Array.isArray(event.n) ? event.n.join(' ') : toStr(event.n),
+    p:      event.p  !== undefined ? String(event.p) : '',
+    age:    event.age || '',
+    lk:     event.lk || '',
+    n:      event.n  || '',
   };
 
   const [form, setForm] = useState({ ...orig });
@@ -1160,37 +1101,14 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
           { key: 'soundcloud',  label: 'SoundCloud',  color: '#ff5500' },
           { key: 'instagram',   label: 'Instagram',   color: '#c13584' },
           { key: 'discogs',     label: 'Discogs',     color: '#333366' },
-        ].filter(({ key }) => mbLinks[key]).map(({ key, label, color }) => {
-          if (key === 'spotify') {
-            const webUrl = mbLinks[key];
-            let appUri = webUrl;
-            try {
-              const m = webUrl.match(/open\.spotify\.com\/(artist|album|track|playlist)\/([^?#]+)/);
-              if (m) appUri = `spotify:${m[1]}:${m[2]}`;
-            } catch {}
-            return React.createElement("a", {
-              key,
-              href: webUrl,
-              target: '_blank', rel: 'noopener',
-              style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: `1px solid ${color}44`, color, background: `${color}11`, textDecoration: 'none' },
-              onClick: (e) => {
-                if (appUri === webUrl) return; // no spotify: URI derived — let href open normally
-                e.preventDefault();
-                const iframe = document.createElement('iframe');
-                iframe.style.cssText = 'display:none;width:0;height:0;border:0;position:absolute';
-                document.body.appendChild(iframe);
-                iframe.src = appUri;
-                setTimeout(() => { try { document.body.removeChild(iframe); } catch {} }, 2000);
-              }
-            }, label + ' ↗');
-          }
-          return React.createElement("a", {
+        ].filter(({ key }) => mbLinks[key]).map(({ key, label, color }) =>
+          React.createElement("a", {
             key,
             href: mbLinks[key],
             target: '_blank', rel: 'noopener',
             style: { fontSize: '10px', padding: '3px 9px', borderRadius: '3px', border: `1px solid ${color}44`, color, background: `${color}11`, textDecoration: 'none' }
-          }, label + ' ↗');
-        }),
+          }, label + ' ↗')
+        ),
         // Discovery links: always shown as fallbacks
         React.createElement("a", {
           href: mbLinks.musicbrainz || `https://musicbrainz.org/search?query=${encodeURIComponent(artistName)}&type=artist`,
@@ -2066,19 +1984,6 @@ function App() {
         }
         snapRef.current = true;
       }
-      // Migrate tags/tickets/hidden from superseded local adds to their server replacements
-      const migration = migrateSupersededLocalAdds(
-        fetched,
-        lsGet(TAGS_KEY, {}),
-        lsGet(TICKETS_KEY, {}),
-        lsGet(HIDDEN_KEY, {})
-      );
-      if (migration) {
-        if (migration.tags)    { setTags(migration.tags);       lsSet(TAGS_KEY,    migration.tags); }
-        if (migration.tickets) { setTickets(migration.tickets); lsSet(TICKETS_KEY, migration.tickets); }
-        if (migration.hidden)  { setHidden(migration.hidden);   lsSet(HIDDEN_KEY,  migration.hidden); }
-        setOverridesTick(t => t + 1);
-      }
       setEvents(fetched);
       setArtistLinks(fetchedLinks || {});
       setCacheInfo({ fromCache, ts, meta });
@@ -2360,7 +2265,7 @@ function App() {
     if (driveUser && COMMUNITY_ENDPOINT) {
       try {
         const tok = await getOrRefreshToken();
-        if (tok) await submitToServer(tok, { type: 'edit', event_id, fields });
+        if (tok) await submitToServer(tok, { type: 'edit', event: { event_id, ...fields } });
       } catch {}
     }
   }, [driveUser]);
@@ -2377,7 +2282,7 @@ function App() {
     if (driveUser && COMMUNITY_ENDPOINT) {
       try {
         const tok = await getOrRefreshToken();
-        if (tok) await submitToServer(tok, { type: 'cancel', event_id });
+        if (tok) await submitToServer(tok, { type: 'cancel', event: { event_id } });
       } catch {}
     }
   }, [driveUser]);
