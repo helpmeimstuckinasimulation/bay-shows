@@ -409,7 +409,7 @@ function classifyDJ(event, djOverrides) {
   const override = djOverrides && djOverrides[event.id];
   if (override === 'live') return false;
   if (override === 'dj') return true;
-  return event.s === '19hz';
+  return event.s === '19hz' || event.dj === true;
 }
 
 // ── Time / end-time inference ─────────────────────────────────────
