@@ -409,7 +409,7 @@ function classifyDJ(event, djOverrides) {
   const override = djOverrides && djOverrides[event.id];
   if (override === 'live') return false;
   if (override === 'dj') return true;
-  return event.s === '19hz' || event.dj === true;
+  return event.s === '19hz';
 }
 
 // ── Time / end-time inference ─────────────────────────────────────
@@ -643,6 +643,7 @@ const S = {
   ageBadge: free => ({ fontSize: '10px', color: free ? 'var(--green)' : 'var(--text3)', flexShrink: 0 }),
   actionRow: { display: 'flex', gap: '6px', marginTop: '4px', flexWrap: 'wrap', alignItems: 'center' },
   actionBtn: { fontSize: '10px', color: 'var(--text3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '2px 7px', letterSpacing: '0.04em' },
+  resaleBtn: { fontSize: '9px', color: 'var(--text3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '1px 5px', letterSpacing: '0.04em', opacity: 0.55 },
   tagBtn: active => ({ fontSize: '10px', color: active ? 'var(--accent)' : 'var(--text3)', border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 'var(--radius)', padding: '2px 7px', letterSpacing: '0.04em' }),
   ticketBtn: active => ({ fontSize: '10px', color: active ? 'var(--green)' : 'var(--text3)', border: `1px solid ${active ? 'var(--green)' : 'var(--border)'}`, borderRadius: 'var(--radius)', padding: '2px 7px', letterSpacing: '0.04em' }),
   hideBtn: { fontSize: '10px', color: 'var(--text3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '2px 5px', letterSpacing: '0.04em', opacity: 0.7 },
@@ -770,7 +771,7 @@ function EditModal({ event, onSubmitEdit, onSubmitCancel, onClose }) {
     if (form.g             !== orig.g)      changed.g       = form.g;
     if (form.p.trim()      !== orig.p)      changed.p       = form.p.trim();
     if (form.age           !== orig.age)    changed.age     = form.age;
-    if (form.lk.trim()     !== orig.lk)     changed.lk      = form.lk.trim();
+    if (form.lk.trim()     !== orig.lk)     { changed.lk = form.lk.trim(); if (form.lk.trim()) { changed.links = { ...(event.links || {}), ticket: form.lk.trim() }; } }
     if (form.n.trim()      !== orig.n)      changed.n       = form.n.trim();
 
     await onSubmitEdit(event.id, changed);
@@ -909,6 +910,44 @@ function EditModal({ event, onSubmitEdit, onSubmitCancel, onClose }) {
   );
 }
 
+// ── EventLinks ────────────────────────────────────────────────────
+// Renders a priority-ordered link row from ev.links (structured) with
+// fallback to flat ev.lk for backward compat.
+// Priority: ticket > venue > promoter, then resale as deprioritised secondary.
+// Null-guards all slot accesses.
+function EventLinks({ event }) {
+  const lks = event.links || {};
+  const ticket   = lks.ticket   || null;
+  const venue    = lks.venue    || null;
+  const promoter = lks.promoter || null;
+  const resale   = lks.resale   || null;
+
+  // Determine primary label: ticket domains get 'tickets ↗', venue gets 'info ↗', promoter gets 'info ↗'
+  const isTicketDomain = url => url && /ticketmaster|axs\.com|eventbrite|seatgeek|dice\.fm|tixr|eventim|ticketweb|showclix|holdmyticket|universe\.com|etix/i.test(url);
+
+  const links = [];
+  if (ticket)   links.push({ href: ticket,   label: isTicketDomain(ticket) ? 'tickets ↗' : 'info ↗', style: S.actionBtn });
+  if (venue && !ticket) links.push({ href: venue, label: 'info ↗', style: S.actionBtn });
+  if (promoter && !ticket && !venue) links.push({ href: promoter, label: 'info ↗', style: S.actionBtn });
+
+  // Fallback: if no links object populated, use flat lk
+  if (!links.length && event.lk) {
+    links.push({ href: event.lk, label: isTicketDomain(event.lk) ? 'tickets ↗' : 'info ↗', style: S.actionBtn });
+  }
+
+  // Resale always secondary if present
+  const resaleNode = resale
+    ? React.createElement('a', { key: 'resale', href: resale, target: '_blank', rel: 'noopener', style: S.resaleBtn, title: 'Secondary market' }, 'resale ↗')
+    : null;
+
+  return React.createElement(React.Fragment, null,
+    ...links.map((l, i) =>
+      React.createElement('a', { key: i, href: l.href, target: '_blank', rel: 'noopener', style: l.style }, l.label)
+    ),
+    resaleNode
+  );
+}
+
 // ── EventCard ─────────────────────────────────────────────────────
 function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onToggleTicket, onHide, onToggleDJ, onArtistClick, onVenueClick, onEdit, driveUser }) {
   const tagged = tags && tags[event.id];
@@ -1021,7 +1060,7 @@ function EventCard({ event, tags, tickets, hidden, djOverrides, onToggleTag, onT
       ),
       // Right: action buttons
       React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '4px', flex: '0 0 auto', flexWrap: 'wrap', justifyContent: 'flex-end' } },
-        event.lk && React.createElement("a", { href: event.lk, target: "_blank", rel: "noopener", style: S.actionBtn }, "info ↗"),
+        React.createElement(EventLinks, { event: event }),
         event.maps_url && React.createElement("a", { href: event.maps_url, target: "_blank", rel: "noopener", style: S.actionBtn }, "map ↗"),
         React.createElement("a", { href: gcalUrl(event), target: "_blank", rel: "noopener", style: S.actionBtn }, "📅"),
         React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag(event.id) }, tagged ? '★' : '☆'),
@@ -1147,7 +1186,7 @@ function ArtistPanel({ artistName, events, artistLinks, tags, tickets, onToggleT
                 })()
               ),
               React.createElement("div", { style: { display: 'flex', gap: '4px', alignItems: 'center', flex: '0 0 auto', flexWrap: 'wrap' } },
-                e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
+                (e.lk || (e.links && Object.keys(e.links).length > 0)) && React.createElement(EventLinks, { event: e }),
                 e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
                 React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "📅"),
                 React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
@@ -1249,7 +1288,7 @@ function VenuePanel({ venueName, events, tags, tickets, onToggleTag, onToggleTic
               })()
             ),
             React.createElement("div", { style: { display: 'flex', gap: '4px', alignItems: 'center', flex: '0 0 auto', flexWrap: 'wrap' } },
-              e.lk && React.createElement("a", { href: e.lk, target: '_blank', rel: 'noopener', style: S.actionBtn }, "info ↗"),
+              (e.lk || (e.links && Object.keys(e.links).length > 0)) && React.createElement(EventLinks, { event: e }),
               e.maps_url && React.createElement("a", { href: e.maps_url, target: '_blank', rel: 'noopener', style: S.actionBtn }, "map ↗"),
               React.createElement("a", { href: gcalUrl(e), target: '_blank', rel: 'noopener', style: S.actionBtn }, "📅"),
               React.createElement("button", { style: S.tagBtn(!!tagged), onClick: () => onToggleTag && onToggleTag(e.id) }, tagged ? '★' : '☆'),
@@ -2067,6 +2106,10 @@ function App() {
         const nonEmpty = Object.fromEntries(
           Object.entries(ed.fields || {}).filter(([, v]) => v !== '' && v !== null && v !== undefined)
         );
+        // If lk was edited and links.ticket wasn't explicitly set, sync it
+        if (nonEmpty.lk && !nonEmpty.links) {
+          nonEmpty.links = { ...(out.links || {}), ticket: nonEmpty.lk };
+        }
         out = { ...out, ...nonEmpty, _edited: true,
                 _editPending: isPending(ed.submittedAt, builtAt) };
       }
